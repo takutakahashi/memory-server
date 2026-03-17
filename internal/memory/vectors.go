@@ -200,7 +200,7 @@ func (c *S3VectorsClient) doRequest(ctx context.Context, method, path string, bo
 	if err != nil {
 		return fmt.Errorf("do request: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	respBytes, err := io.ReadAll(resp.Body)
 	if err != nil {

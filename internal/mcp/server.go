@@ -4,14 +4,14 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/http"
 	"os"
 	"sort"
 	"sync"
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/mark3labs/mcp-go/mcp"
-	"github.com/mark3labs/mcp-go/server"
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/takutakahashi/memory-server/internal/memory"
 
 	"github.com/aws/aws-sdk-go-v2/config"
@@ -23,7 +23,7 @@ type Server struct {
 	vectors   *memory.S3VectorsClient
 	embedding *memory.EmbeddingClient
 	scorer    *memory.Scorer
-	mcpServer *server.MCPServer
+	mcpServer *mcp.Server
 }
 
 // NewServer creates a new Server by loading AWS config and initializing all components.
@@ -47,58 +47,81 @@ func NewServer(ctx context.Context) (*Server, error) {
 		vectors:   memory.NewS3VectorsClient(cfg),
 		embedding: memory.NewEmbeddingClient(cfg),
 		scorer:    memory.NewScorer(),
-		mcpServer: server.NewMCPServer(serverName, serverVersion),
+		mcpServer: mcp.NewServer(&mcp.Implementation{
+			Name:    serverName,
+			Version: serverVersion,
+		}, nil),
 	}
 
 	s.registerTools()
 	return s, nil
 }
 
+// --- Tool input types ---
+
+type AddMemoryInput struct {
+	UserID  string   `json:"user_id" jsonschema:"User ID (default: 'default')"`
+	Content string   `json:"content" jsonschema:"Content of the memory"`
+	Tags    []string `json:"tags" jsonschema:"Tags for the memory"`
+}
+
+type SearchMemoriesInput struct {
+	UserID string   `json:"user_id" jsonschema:"User ID (default: 'default')"`
+	Query  string   `json:"query" jsonschema:"Natural language search query"`
+	Tags   []string `json:"tags" jsonschema:"Tags for OR-filtered search (max 5)"`
+	Limit  int      `json:"limit" jsonschema:"Number of results to return (default: 10)"`
+}
+
+type ListMemoriesInput struct {
+	UserID    string `json:"user_id" jsonschema:"User ID (default: 'default')"`
+	Limit     int    `json:"limit" jsonschema:"Number of results per page (default: 20)"`
+	NextToken string `json:"next_token" jsonschema:"Pagination token"`
+}
+
+type GetMemoryInput struct {
+	MemoryID string `json:"memory_id" jsonschema:"Memory ID"`
+}
+
+type UpdateMemoryInput struct {
+	MemoryID string   `json:"memory_id" jsonschema:"Memory ID"`
+	Content  string   `json:"content" jsonschema:"New content"`
+	Tags     []string `json:"tags" jsonschema:"New tags"`
+}
+
+type DeleteMemoryInput struct {
+	MemoryID string `json:"memory_id" jsonschema:"Memory ID"`
+}
+
 func (s *Server) registerTools() {
-	// add_memory
-	s.mcpServer.AddTool(mcp.NewTool("add_memory",
-		mcp.WithDescription("Add a new memory"),
-		mcp.WithString("user_id", mcp.Description("User ID (default: 'default')")),
-		mcp.WithString("content", mcp.Required(), mcp.Description("Content of the memory")),
-		mcp.WithArray("tags", mcp.Description("Tags for the memory")),
-	), s.handleAddMemory)
+	mcp.AddTool(s.mcpServer, &mcp.Tool{
+		Name:        "add_memory",
+		Description: "Add a new memory",
+	}, s.handleAddMemory)
 
-	// search_memories
-	s.mcpServer.AddTool(mcp.NewTool("search_memories",
-		mcp.WithDescription("Search memories using semantic similarity"),
-		mcp.WithString("user_id", mcp.Description("User ID (default: 'default')")),
-		mcp.WithString("query", mcp.Required(), mcp.Description("Natural language search query")),
-		mcp.WithArray("tags", mcp.Description("Tags for OR-filtered search (max 5)")),
-		mcp.WithNumber("limit", mcp.Description("Number of results to return (default: 10)")),
-	), s.handleSearchMemories)
+	mcp.AddTool(s.mcpServer, &mcp.Tool{
+		Name:        "search_memories",
+		Description: "Search memories using semantic similarity",
+	}, s.handleSearchMemories)
 
-	// list_memories
-	s.mcpServer.AddTool(mcp.NewTool("list_memories",
-		mcp.WithDescription("List memories for a user"),
-		mcp.WithString("user_id", mcp.Description("User ID (default: 'default')")),
-		mcp.WithNumber("limit", mcp.Description("Number of results per page (default: 20)")),
-		mcp.WithString("next_token", mcp.Description("Pagination token")),
-	), s.handleListMemories)
+	mcp.AddTool(s.mcpServer, &mcp.Tool{
+		Name:        "list_memories",
+		Description: "List memories for a user",
+	}, s.handleListMemories)
 
-	// get_memory
-	s.mcpServer.AddTool(mcp.NewTool("get_memory",
-		mcp.WithDescription("Get a single memory by ID"),
-		mcp.WithString("memory_id", mcp.Required(), mcp.Description("Memory ID")),
-	), s.handleGetMemory)
+	mcp.AddTool(s.mcpServer, &mcp.Tool{
+		Name:        "get_memory",
+		Description: "Get a single memory by ID",
+	}, s.handleGetMemory)
 
-	// update_memory
-	s.mcpServer.AddTool(mcp.NewTool("update_memory",
-		mcp.WithDescription("Update an existing memory"),
-		mcp.WithString("memory_id", mcp.Required(), mcp.Description("Memory ID")),
-		mcp.WithString("content", mcp.Description("New content")),
-		mcp.WithArray("tags", mcp.Description("New tags")),
-	), s.handleUpdateMemory)
+	mcp.AddTool(s.mcpServer, &mcp.Tool{
+		Name:        "update_memory",
+		Description: "Update an existing memory",
+	}, s.handleUpdateMemory)
 
-	// delete_memory
-	s.mcpServer.AddTool(mcp.NewTool("delete_memory",
-		mcp.WithDescription("Delete a memory"),
-		mcp.WithString("memory_id", mcp.Required(), mcp.Description("Memory ID")),
-	), s.handleDeleteMemory)
+	mcp.AddTool(s.mcpServer, &mcp.Tool{
+		Name:        "delete_memory",
+		Description: "Delete a memory",
+	}, s.handleDeleteMemory)
 }
 
 // Start starts the MCP server over SSE/HTTP.
@@ -107,24 +130,29 @@ func (s *Server) Start(port string) error {
 		port = "8080"
 	}
 	addr := ":" + port
-	sseServer := server.NewSSEServer(s.mcpServer, server.WithBaseURL(fmt.Sprintf("http://localhost%s", addr)))
-	return sseServer.Start(addr)
+	handler := mcp.NewSSEHandler(func(req *http.Request) *mcp.Server {
+		return s.mcpServer
+	}, nil)
+	return http.ListenAndServe(addr, handler)
 }
 
 // --- Tool handlers ---
 
-func (s *Server) handleAddMemory(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	userID := req.GetString("user_id", "default")
-	content := req.GetString("content", "")
-	if content == "" {
-		return errorResult("content is required"), nil
+func (s *Server) handleAddMemory(ctx context.Context, req *mcp.CallToolRequest, input AddMemoryInput) (*mcp.CallToolResult, any, error) {
+	userID := input.UserID
+	if userID == "" {
+		userID = "default"
 	}
-	tags := req.GetStringSlice("tags", nil)
+	content := input.Content
+	if content == "" {
+		return errorResult("content is required"), nil, nil
+	}
+	tags := input.Tags
 
 	// Generate embedding
 	embedding, err := s.embedding.Generate(ctx, content)
 	if err != nil {
-		return errorResult(fmt.Sprintf("generate embedding: %v", err)), nil
+		return errorResult(fmt.Sprintf("generate embedding: %v", err)), nil, nil
 	}
 
 	memoryID := uuid.New().String()
@@ -132,7 +160,7 @@ func (s *Server) handleAddMemory(ctx context.Context, req mcp.CallToolRequest) (
 
 	// Put vector
 	if err := s.vectors.PutVectors(ctx, memoryID, embedding, userID); err != nil {
-		return errorResult(fmt.Sprintf("put vectors: %v", err)), nil
+		return errorResult(fmt.Sprintf("put vectors: %v", err)), nil, nil
 	}
 
 	// Save to DynamoDB
@@ -148,7 +176,7 @@ func (s *Server) handleAddMemory(ctx context.Context, req mcp.CallToolRequest) (
 		VectorID:       memoryID,
 	}
 	if err := s.store.Put(ctx, m); err != nil {
-		return errorResult(fmt.Sprintf("store memory: %v", err)), nil
+		return errorResult(fmt.Sprintf("store memory: %v", err)), nil, nil
 	}
 
 	return jsonResult(map[string]string{
@@ -157,22 +185,28 @@ func (s *Server) handleAddMemory(ctx context.Context, req mcp.CallToolRequest) (
 	})
 }
 
-func (s *Server) handleSearchMemories(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	userID := req.GetString("user_id", "default")
-	query := req.GetString("query", "")
-	if query == "" {
-		return errorResult("query is required"), nil
+func (s *Server) handleSearchMemories(ctx context.Context, req *mcp.CallToolRequest, input SearchMemoriesInput) (*mcp.CallToolResult, any, error) {
+	userID := input.UserID
+	if userID == "" {
+		userID = "default"
 	}
-	tags := req.GetStringSlice("tags", nil)
+	query := input.Query
+	if query == "" {
+		return errorResult("query is required"), nil, nil
+	}
+	tags := input.Tags
 	if len(tags) > 5 {
 		tags = tags[:5]
 	}
-	limit := req.GetInt("limit", 10)
+	limit := input.Limit
+	if limit == 0 {
+		limit = 10
+	}
 
 	// Generate embedding for query
 	embedding, err := s.embedding.Generate(ctx, query)
 	if err != nil {
-		return errorResult(fmt.Sprintf("generate query embedding: %v", err)), nil
+		return errorResult(fmt.Sprintf("generate query embedding: %v", err)), nil, nil
 	}
 
 	var vectorResults []*memory.VectorResult
@@ -214,7 +248,7 @@ func (s *Server) handleSearchMemories(ctx context.Context, req mcp.CallToolReque
 	} else {
 		vectorResults, err = s.vectors.QueryVectors(ctx, embedding, 50, userID)
 		if err != nil {
-			return errorResult(fmt.Sprintf("query vectors: %v", err)), nil
+			return errorResult(fmt.Sprintf("query vectors: %v", err)), nil, nil
 		}
 	}
 
@@ -233,7 +267,7 @@ func (s *Server) handleSearchMemories(ctx context.Context, req mcp.CallToolReque
 	// Fetch metadata from DynamoDB
 	memories, err := s.store.GetByIDs(ctx, memoryIDs)
 	if err != nil {
-		return errorResult(fmt.Sprintf("get memories: %v", err)), nil
+		return errorResult(fmt.Sprintf("get memories: %v", err)), nil, nil
 	}
 
 	// Filter by user_id and score
@@ -282,10 +316,16 @@ func (s *Server) handleSearchMemories(ctx context.Context, req mcp.CallToolReque
 	return jsonResult(results)
 }
 
-func (s *Server) handleListMemories(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	userID := req.GetString("user_id", "default")
-	limit := req.GetInt("limit", 20)
-	nextTokenStr := req.GetString("next_token", "")
+func (s *Server) handleListMemories(ctx context.Context, req *mcp.CallToolRequest, input ListMemoriesInput) (*mcp.CallToolResult, any, error) {
+	userID := input.UserID
+	if userID == "" {
+		userID = "default"
+	}
+	limit := input.Limit
+	if limit == 0 {
+		limit = 20
+	}
+	nextTokenStr := input.NextToken
 	var nextToken *string
 	if nextTokenStr != "" {
 		nextToken = &nextTokenStr
@@ -293,7 +333,7 @@ func (s *Server) handleListMemories(ctx context.Context, req mcp.CallToolRequest
 
 	memories, newNextToken, err := s.store.ListByUserID(ctx, userID, limit, nextToken)
 	if err != nil {
-		return errorResult(fmt.Sprintf("list memories: %v", err)), nil
+		return errorResult(fmt.Sprintf("list memories: %v", err)), nil, nil
 	}
 
 	resp := map[string]interface{}{
@@ -308,15 +348,15 @@ func (s *Server) handleListMemories(ctx context.Context, req mcp.CallToolRequest
 	return jsonResult(resp)
 }
 
-func (s *Server) handleGetMemory(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	memoryID := req.GetString("memory_id", "")
+func (s *Server) handleGetMemory(ctx context.Context, req *mcp.CallToolRequest, input GetMemoryInput) (*mcp.CallToolResult, any, error) {
+	memoryID := input.MemoryID
 	if memoryID == "" {
-		return errorResult("memory_id is required"), nil
+		return errorResult("memory_id is required"), nil, nil
 	}
 
 	m, err := s.store.Get(ctx, memoryID)
 	if err != nil {
-		return errorResult(fmt.Sprintf("get memory: %v", err)), nil
+		return errorResult(fmt.Sprintf("get memory: %v", err)), nil, nil
 	}
 
 	// Update access count asynchronously
@@ -327,18 +367,18 @@ func (s *Server) handleGetMemory(ctx context.Context, req mcp.CallToolRequest) (
 	return jsonResult(m)
 }
 
-func (s *Server) handleUpdateMemory(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	memoryID := req.GetString("memory_id", "")
+func (s *Server) handleUpdateMemory(ctx context.Context, req *mcp.CallToolRequest, input UpdateMemoryInput) (*mcp.CallToolResult, any, error) {
+	memoryID := input.MemoryID
 	if memoryID == "" {
-		return errorResult("memory_id is required"), nil
+		return errorResult("memory_id is required"), nil, nil
 	}
 
-	newContent := req.GetString("content", "")
-	newTags := req.GetStringSlice("tags", nil)
+	newContent := input.Content
+	newTags := input.Tags
 
 	m, err := s.store.Get(ctx, memoryID)
 	if err != nil {
-		return errorResult(fmt.Sprintf("get memory: %v", err)), nil
+		return errorResult(fmt.Sprintf("get memory: %v", err)), nil, nil
 	}
 
 	contentChanged := newContent != "" && newContent != m.Content
@@ -346,13 +386,13 @@ func (s *Server) handleUpdateMemory(ctx context.Context, req mcp.CallToolRequest
 		// Re-embed and update vectors
 		embedding, embErr := s.embedding.Generate(ctx, newContent)
 		if embErr != nil {
-			return errorResult(fmt.Sprintf("generate embedding: %v", embErr)), nil
+			return errorResult(fmt.Sprintf("generate embedding: %v", embErr)), nil, nil
 		}
 		// Delete old vector (best effort)
 		_ = s.vectors.DeleteVectors(ctx, []string{m.VectorID})
 		// Put new vector
 		if putErr := s.vectors.PutVectors(ctx, memoryID, embedding, m.UserID); putErr != nil {
-			return errorResult(fmt.Sprintf("put vectors: %v", putErr)), nil
+			return errorResult(fmt.Sprintf("put vectors: %v", putErr)), nil, nil
 		}
 		m.Content = newContent
 		m.VectorID = memoryID
@@ -364,16 +404,16 @@ func (s *Server) handleUpdateMemory(ctx context.Context, req mcp.CallToolRequest
 	m.UpdatedAt = time.Now().UTC()
 
 	if err := s.store.Update(ctx, m); err != nil {
-		return errorResult(fmt.Sprintf("update memory: %v", err)), nil
+		return errorResult(fmt.Sprintf("update memory: %v", err)), nil, nil
 	}
 
 	return jsonResult(m)
 }
 
-func (s *Server) handleDeleteMemory(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	memoryID := req.GetString("memory_id", "")
+func (s *Server) handleDeleteMemory(ctx context.Context, req *mcp.CallToolRequest, input DeleteMemoryInput) (*mcp.CallToolResult, any, error) {
+	memoryID := input.MemoryID
 	if memoryID == "" {
-		return errorResult("memory_id is required"), nil
+		return errorResult("memory_id is required"), nil, nil
 	}
 
 	// Delete from S3 Vectors (best effort - DynamoDB is source of truth)
@@ -381,7 +421,7 @@ func (s *Server) handleDeleteMemory(ctx context.Context, req mcp.CallToolRequest
 
 	// Delete from DynamoDB
 	if err := s.store.Delete(ctx, memoryID); err != nil {
-		return errorResult(fmt.Sprintf("delete memory: %v", err)), nil
+		return errorResult(fmt.Sprintf("delete memory: %v", err)), nil, nil
 	}
 
 	return jsonResult(map[string]string{"status": "ok"})
@@ -389,14 +429,23 @@ func (s *Server) handleDeleteMemory(ctx context.Context, req mcp.CallToolRequest
 
 // --- Helpers ---
 
-func jsonResult(v interface{}) (*mcp.CallToolResult, error) {
+func jsonResult(v interface{}) (*mcp.CallToolResult, any, error) {
 	b, err := json.Marshal(v)
 	if err != nil {
-		return errorResult(fmt.Sprintf("marshal result: %v", err)), nil
+		return errorResult(fmt.Sprintf("marshal result: %v", err)), nil, nil
 	}
-	return mcp.NewToolResultText(string(b)), nil
+	return &mcp.CallToolResult{
+		Content: []mcp.Content{
+			&mcp.TextContent{Text: string(b)},
+		},
+	}, nil, nil
 }
 
 func errorResult(msg string) *mcp.CallToolResult {
-	return mcp.NewToolResultError(msg)
+	return &mcp.CallToolResult{
+		IsError: true,
+		Content: []mcp.Content{
+			&mcp.TextContent{Text: msg},
+		},
+	}
 }

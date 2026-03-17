@@ -1,0 +1,83 @@
+replicaCount: 1
+
+image:
+  repository: ghcr.io/takutakahashi/memory-server
+  pullPolicy: IfNotPresent
+  tag: ""
+
+imagePullSecrets: []
+nameOverride: ""
+fullnameOverride: ""
+
+serviceAccount:
+  create: true
+  annotations: {}
+  name: ""
+
+podAnnotations: {}
+podSecurityContext: {}
+securityContext: {}
+
+service:
+  type: ClusterIP
+  port: 8080
+
+ingress:
+  enabled: false
+  className: ""
+  annotations: {}
+  hosts:
+    - host: memory-server.local
+      paths:
+        - path: /
+          pathType: Prefix
+  tls: []
+
+resources:
+  limits:
+    cpu: 500m
+    memory: 256Mi
+  requests:
+    cpu: 100m
+    memory: 128Mi
+
+autoscaling:
+  enabled: false
+  minReplicas: 1
+  maxReplicas: 3
+  targetCPUUtilizationPercentage: 80
+
+nodeSelector: {}
+tolerations: []
+affinity: {}
+
+# AWS configuration
+aws:
+  region: "ap-northeast-1"
+  # If using IAM role (recommended), leave accessKeyId and secretAccessKey empty
+  # and annotate the ServiceAccount with the IAM role ARN
+  accessKeyId: ""
+  secretAccessKey: ""
+  # IAM role ARN for IRSA (EKS IAM Roles for Service Accounts)
+  irsaRoleArn: ""
+
+# DynamoDB configuration
+dynamodb:
+  tableName: "memories"
+
+# S3 Vectors configuration
+s3vectors:
+  bucketName: ""
+  indexName: "memories"
+
+# Bedrock configuration
+bedrock:
+  region: ""  # defaults to aws.region if empty
+
+# Memory decay parameters
+decay:
+  lambda: "0.01"
+  mu: "0.005"
+
+# Existing secret for AWS credentials (alternative to aws.accessKeyId/secretAccessKey)
+existingSecret: ""

@@ -1,0 +1,58 @@
+name: Helm Publish
+
+on:
+  push:
+    tags:
+      - 'v*'
+      - 'helm-v*'
+  workflow_dispatch:
+
+env:
+  REGISTRY: ghcr.io
+  CHART_NAME: memory-server
+
+jobs:
+  helm-publish:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Helm
+        uses: azure/setup-helm@v4
+        with:
+          version: v3.14.0
+
+      - name: Log in to the Container registry
+        run: echo "${{ secrets.GITHUB_TOKEN }}" | helm registry login ${{ env.REGISTRY }} --username ${{ github.actor }} --password-stdin
+
+      - name: Get chart version
+        id: chart-version
+        run: |
+          if [[ "${{ github.ref }}" == refs/tags/v* ]]; then
+            VERSION="${{ github.ref_name }}"
+            VERSION="${VERSION#v}"
+          elif [[ "${{ github.ref }}" == refs/tags/helm-v* ]]; then
+            VERSION="${{ github.ref_name }}"
+            VERSION="${VERSION#helm-v}"
+          else
+            VERSION=$(grep '^version:' helm/memory-server/Chart.yaml | awk '{print $2}')
+          fi
+          echo "version=${VERSION}" >> $GITHUB_OUTPUT
+
+      - name: Update chart version
+        run: |
+          VERSION="${{ steps.chart-version.outputs.version }}"
+          sed -i "s/^version:.*/version: ${VERSION}/" helm/memory-server/Chart.yaml
+          sed -i "s/^appVersion:.*/appVersion: \"${VERSION}\"/" helm/memory-server/Chart.yaml
+
+      - name: Package Helm chart
+        run: helm package helm/memory-server/
+
+      - name: Push Helm chart to GHCR
+        run: |
+          OWNER=$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')
+          helm push ${{ env.CHART_NAME }}-*.tgz oci://${{ env.REGISTRY }}/${OWNER}/charts

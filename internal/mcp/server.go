@@ -130,10 +130,19 @@ func (s *Server) Start(port string) error {
 		port = "8080"
 	}
 	addr := ":" + port
-	handler := mcp.NewSSEHandler(func(req *http.Request) *mcp.Server {
+	sseHandler := mcp.NewSSEHandler(func(req *http.Request) *mcp.Server {
 		return s.mcpServer
 	}, nil)
-	return http.ListenAndServe(addr, handler)
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		fmt.Fprint(w, `{"status":"ok"}`)
+	})
+	mux.Handle("/", sseHandler)
+
+	return http.ListenAndServe(addr, mux)
 }
 
 // --- Tool handlers ---

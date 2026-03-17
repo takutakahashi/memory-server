@@ -1,0 +1,57 @@
+version: "3.9"
+
+services:
+  localstack:
+    image: localstack/localstack:3
+    ports:
+      - "4566:4566"
+    environment:
+      - SERVICES=dynamodb
+      - DEFAULT_REGION=ap-northeast-1
+      - AWS_DEFAULT_REGION=ap-northeast-1
+    volumes:
+      - localstack-data:/var/lib/localstack
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:4566/_localstack/health"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  init-dynamodb:
+    image: amazon/aws-cli:latest
+    depends_on:
+      localstack:
+        condition: service_healthy
+    environment:
+      - AWS_ACCESS_KEY_ID=test
+      - AWS_SECRET_ACCESS_KEY=test
+      - AWS_DEFAULT_REGION=ap-northeast-1
+      - DYNAMODB_TABLE_NAME=memories
+      - DYNAMODB_ENDPOINT_URL=http://localstack:4566
+    volumes:
+      - ./scripts:/scripts
+    entrypoint: ["/scripts/init-dynamodb.sh"]
+
+  memory-server:
+    build: .
+    ports:
+      - "8080:8080"
+    depends_on:
+      init-dynamodb:
+        condition: service_completed_successfully
+    environment:
+      - PORT=8080
+      - AWS_REGION=ap-northeast-1
+      - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID:-}
+      - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY:-}
+      - DYNAMODB_TABLE_NAME=memories
+      - S3_VECTORS_BUCKET_NAME=${S3_VECTORS_BUCKET_NAME:-}
+      - S3_VECTORS_INDEX_NAME=${S3_VECTORS_INDEX_NAME:-memories}
+      - BEDROCK_REGION=${BEDROCK_REGION:-ap-northeast-1}
+      - DECAY_LAMBDA=${DECAY_LAMBDA:-0.01}
+      - DECAY_MU=${DECAY_MU:-0.005}
+      - MCP_SERVER_NAME=memory-server
+      - MCP_SERVER_VERSION=1.0.0
+
+volumes:
+  localstack-data:

@@ -124,15 +124,19 @@ func (s *Server) registerTools() {
 	}, s.handleDeleteMemory)
 }
 
-// Start starts the MCP server over SSE/HTTP.
+// Start starts the MCP server over SSE and Streamable HTTP.
 func (s *Server) Start(port string) error {
 	if port == "" {
 		port = "8080"
 	}
 	addr := ":" + port
-	sseHandler := mcp.NewSSEHandler(func(req *http.Request) *mcp.Server {
+
+	getServer := func(req *http.Request) *mcp.Server {
 		return s.mcpServer
-	}, nil)
+	}
+
+	sseHandler := mcp.NewSSEHandler(getServer, nil)
+	streamableHandler := mcp.NewStreamableHTTPHandler(getServer, nil)
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
@@ -140,7 +144,8 @@ func (s *Server) Start(port string) error {
 		w.WriteHeader(http.StatusOK)
 		_, _ = fmt.Fprint(w, `{"status":"ok"}`)
 	})
-	mux.Handle("/", sseHandler)
+	mux.Handle("/sse", sseHandler)
+	mux.Handle("/mcp", streamableHandler)
 
 	return http.ListenAndServe(addr, mux)
 }

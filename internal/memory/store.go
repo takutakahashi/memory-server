@@ -47,6 +47,13 @@ func (s *Store) Put(ctx context.Context, m *Memory) error {
 	return nil
 }
 
+// normalizeScope ensures Scope is always set; legacy records with empty scope default to private.
+func normalizeScope(m *Memory) {
+	if m.Scope == "" {
+		m.Scope = ScopePrivate
+	}
+}
+
 // Get retrieves a single memory by memory_id.
 func (s *Store) Get(ctx context.Context, memoryID string) (*Memory, error) {
 	result, err := s.client.GetItem(ctx, &dynamodb.GetItemInput{
@@ -66,6 +73,7 @@ func (s *Store) Get(ctx context.Context, memoryID string) (*Memory, error) {
 	if err := attributevalue.UnmarshalMap(result.Item, &m); err != nil {
 		return nil, fmt.Errorf("unmarshal memory: %w", err)
 	}
+	normalizeScope(&m)
 	return &m, nil
 }
 
@@ -108,6 +116,7 @@ func (s *Store) GetByIDs(ctx context.Context, memoryIDs []string) ([]*Memory, er
 			if err := attributevalue.UnmarshalMap(item, &m); err != nil {
 				return nil, fmt.Errorf("unmarshal memory: %w", err)
 			}
+			normalizeScope(&m)
 			memories = append(memories, &m)
 		}
 	}
@@ -145,6 +154,7 @@ func (s *Store) ListByUserID(ctx context.Context, userID string, limit int, next
 		if err := attributevalue.UnmarshalMap(item, &m); err != nil {
 			return nil, nil, fmt.Errorf("unmarshal memory: %w", err)
 		}
+		normalizeScope(&m)
 		memories = append(memories, &m)
 	}
 

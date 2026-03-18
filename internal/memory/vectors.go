@@ -17,6 +17,8 @@ import (
 )
 
 // S3VectorsClient handles S3 Vectors API operations using SigV4-signed HTTP requests.
+// The S3 Vectors API uses POST /{OperationName} with operation parameters in the request body.
+// Endpoint format: https://s3vectors.{region}.api.aws
 type S3VectorsClient struct {
 	cfg        aws.Config
 	bucketName string
@@ -53,67 +55,80 @@ func NewS3VectorsClient(cfg aws.Config) *S3VectorsClient {
 	}
 }
 
-// putVectorsRequest is the request body for PutVectors.
-type putVectorsRequest struct {
-	Vectors []vectorItem `json:"vectors"`
-}
-
-type vectorItem struct {
-	Key      string            `json:"key"`
-	Data     vectorData        `json:"data"`
-	Metadata map[string]string `json:"metadata"`
-}
-
+// vectorData is the VectorData union type (only float32 is supported).
 type vectorData struct {
 	Float32 []float64 `json:"float32"`
 }
 
-// queryVectorsRequest is the request body for QueryVectors.
-type queryVectorsRequest struct {
-	QueryVector vectorData         `json:"queryVector"`
-	TopK        int                `json:"topK"`
-	Filter      map[string]interface{} `json:"filter,omitempty"`
+// putVectorsRequest is the request body for POST /PutVectors.
+type putVectorsRequest struct {
+	VectorBucketName string       `json:"vectorBucketName"`
+	IndexName        string       `json:"indexName"`
+	Vectors          []vectorItem `json:"vectors"`
 }
 
-// queryVectorsResponse is the response body for QueryVectors.
+type vectorItem struct {
+	Key      string                 `json:"key"`
+	Data     vectorData             `json:"data"`
+	Metadata map[string]interface{} `json:"metadata"`
+}
+
+// queryVectorsRequest is the request body for POST /QueryVectors.
+type queryVectorsRequest struct {
+	VectorBucketName string                 `json:"vectorBucketName"`
+	IndexName        string                 `json:"indexName"`
+	TopK             int                    `json:"topK"`
+	QueryVector      vectorData             `json:"queryVector"`
+	Filter           map[string]interface{} `json:"filter,omitempty"`
+	ReturnMetadata   bool                   `json:"returnMetadata"`
+}
+
+// queryVectorsResponse is the response body for POST /QueryVectors.
 type queryVectorsResponse struct {
-	Vectors []queryVectorItem `json:"vectors"`
+	Vectors        []queryVectorItem `json:"vectors"`
+	DistanceMetric string            `json:"distanceMetric"`
 }
 
 type queryVectorItem struct {
-	Key      string            `json:"key"`
-	Score    float64           `json:"score"`
-	Metadata map[string]string `json:"metadata"`
+	Key      string                 `json:"key"`
+	Distance float64                `json:"distance"`
+	Metadata map[string]interface{} `json:"metadata"`
 }
 
-// deleteVectorsRequest is the request body for DeleteVectors.
+// deleteVectorsRequest is the request body for POST /DeleteVectors.
 type deleteVectorsRequest struct {
-	Keys []string `json:"keys"`
+	VectorBucketName string   `json:"vectorBucketName"`
+	IndexName        string   `json:"indexName"`
+	Keys             []string `json:"keys"`
 }
 
 // PutVectors stores a vector in S3 Vectors.
 func (c *S3VectorsClient) PutVectors(ctx context.Context, key string, embedding []float64, userID string) error {
 	reqBody := putVectorsRequest{
+		VectorBucketName: c.bucketName,
+		IndexName:        c.indexName,
 		Vectors: []vectorItem{
 			{
 				Key:  key,
 				Data: vectorData{Float32: embedding},
-				Metadata: map[string]string{
+				Metadata: map[string]interface{}{
 					"user_id": userID,
 				},
 			},
 		},
 	}
 
-	path := fmt.Sprintf("/vector-buckets/%s/vector-indexes/%s/vectors", c.bucketName, c.indexName)
-	return c.doRequest(ctx, http.MethodPut, path, reqBody, nil)
+	return c.doRequest(ctx, "/PutVectors", reqBody, nil)
 }
 
 // QueryVectors performs a similarity search in S3 Vectors.
 func (c *S3VectorsClient) QueryVectors(ctx context.Context, embedding []float64, topK int, userID string) ([]*VectorResult, error) {
 	reqBody := queryVectorsRequest{
-		QueryVector: vectorData{Float32: embedding},
-		TopK:        topK,
+		VectorBucketName: c.bucketName,
+		IndexName:        c.indexName,
+		TopK:             topK,
+		QueryVector:      vectorData{Float32: embedding},
+		ReturnMetadata:   true,
 	}
 	if userID != "" {
 		reqBody.Filter = map[string]interface{}{
@@ -124,17 +139,26 @@ func (c *S3VectorsClient) QueryVectors(ctx context.Context, embedding []float64,
 	}
 
 	var resp queryVectorsResponse
-	path := fmt.Sprintf("/vector-buckets/%s/vector-indexes/%s/vectors/query", c.bucketName, c.indexName)
-	if err := c.doRequest(ctx, http.MethodPost, path, reqBody, &resp); err != nil {
+	if err := c.doRequest(ctx, "/QueryVectors", reqBody, &resp); err != nil {
 		return nil, err
 	}
 
 	results := make([]*VectorResult, 0, len(resp.Vectors))
 	for _, v := range resp.Vectors {
+		// Convert distance to score: for cosine distance, lower is more similar.
+		// Use 1 - distance as similarity score (score=1 means identical).
+		score := 1.0 - v.Distance
+
+		metadata := make(map[string]string)
+		for k, val := range v.Metadata {
+			if s, ok := val.(string); ok {
+				metadata[k] = s
+			}
+		}
 		results = append(results, &VectorResult{
 			Key:      v.Key,
-			Score:    v.Score,
-			Metadata: v.Metadata,
+			Score:    score,
+			Metadata: metadata,
 		})
 	}
 	return results, nil
@@ -152,13 +176,16 @@ func (c *S3VectorsClient) DeleteVectors(ctx context.Context, keys []string) erro
 	if len(keys) == 0 {
 		return nil
 	}
-	reqBody := deleteVectorsRequest{Keys: keys}
-	path := fmt.Sprintf("/vector-buckets/%s/vector-indexes/%s/vectors", c.bucketName, c.indexName)
-	return c.doRequest(ctx, http.MethodDelete, path, reqBody, nil)
+	reqBody := deleteVectorsRequest{
+		VectorBucketName: c.bucketName,
+		IndexName:        c.indexName,
+		Keys:             keys,
+	}
+	return c.doRequest(ctx, "/DeleteVectors", reqBody, nil)
 }
 
-// doRequest performs a SigV4-signed HTTP request to S3 Vectors API.
-func (c *S3VectorsClient) doRequest(ctx context.Context, method, path string, body interface{}, out interface{}) error {
+// doRequest performs a SigV4-signed HTTP POST request to S3 Vectors API.
+func (c *S3VectorsClient) doRequest(ctx context.Context, operation string, body interface{}, out interface{}) error {
 	var bodyReader io.Reader
 	var bodyBytes []byte
 	var err error
@@ -171,8 +198,8 @@ func (c *S3VectorsClient) doRequest(ctx context.Context, method, path string, bo
 		bodyReader = bytes.NewReader(bodyBytes)
 	}
 
-	url := c.endpoint + path
-	req, err := http.NewRequestWithContext(ctx, method, url, bodyReader)
+	url := c.endpoint + operation
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bodyReader)
 	if err != nil {
 		return fmt.Errorf("create request: %w", err)
 	}

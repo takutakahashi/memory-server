@@ -12,7 +12,7 @@ import (
 
 const (
 	titanEmbedModelID = "amazon.titan-embed-text-v2:0"
-	embeddingDims     = 1536
+	embeddingDims     = 1024 // Titan Embed Text v2 supports 256, 512, 1024 only (1536 is invalid)
 )
 
 // EmbeddingClient generates embeddings using Amazon Bedrock Titan.

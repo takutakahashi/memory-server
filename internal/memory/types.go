@@ -2,10 +2,21 @@ package memory
 
 import "time"
 
+// Scope defines the visibility of a memory.
+type Scope string
+
+const (
+	// ScopePrivate means only the owner can see the memory.
+	ScopePrivate Scope = "private"
+	// ScopePublic means all users can see the memory.
+	ScopePublic Scope = "public"
+)
+
 // Memory represents a single memory entry.
 type Memory struct {
 	MemoryID       string    `json:"memory_id" dynamodbav:"memory_id"`
 	UserID         string    `json:"user_id" dynamodbav:"user_id"`
+	Scope          Scope     `json:"scope" dynamodbav:"scope"`
 	Content        string    `json:"content" dynamodbav:"content"`
 	Tags           []string  `json:"tags" dynamodbav:"tags"`
 	CreatedAt      time.Time `json:"created_at" dynamodbav:"created_at"`

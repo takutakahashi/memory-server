@@ -122,12 +122,16 @@ func printUsage() {
 	fmt.Fprintf(os.Stderr, `Usage: memory-cli [--server URL] [--json] <command> [options]
 
 Commands:
-  add     --user-id ID --content TEXT [--tag TAG ...]
+  add     --user-id ID --content TEXT [--tag TAG ...] [--scope SCOPE]
   search  --user-id ID --query TEXT [--tag TAG ...] [--limit N]
   list    --user-id ID [--limit N] [--next-token TOKEN]
   get     <memory-id>
-  update  <memory-id> [--content TEXT] [--tag TAG ...]
+  update  <memory-id> [--content TEXT] [--tag TAG ...] [--scope SCOPE]
   delete  <memory-id>
+
+Scope values:
+  private  Only visible to the owner (default)
+  public   Visible to all users
 
 Environment:
   MEMORY_SERVER_URL  Server base URL (default: http://localhost:8080)
@@ -142,6 +146,7 @@ func runAdd(baseURL string, args []string) (interface{}, error) {
 	fs := flag.NewFlagSet("add", flag.ContinueOnError)
 	userID := fs.String("user-id", "", "User ID")
 	content := fs.String("content", "", "Content of the memory")
+	scope := fs.String("scope", "", "Visibility scope: 'private' (default) or 'public'")
 	var tags tagList
 	fs.Var(&tags, "tag", "Tag (can be specified multiple times)")
 	if err := fs.Parse(args); err != nil {
@@ -153,9 +158,12 @@ func runAdd(baseURL string, args []string) (interface{}, error) {
 	}
 
 	body := map[string]interface{}{
-		"user_id":  *userID,
-		"content":  *content,
-		"tags":     []string(tags),
+		"user_id": *userID,
+		"content": *content,
+		"tags":    []string(tags),
+	}
+	if *scope != "" {
+		body["scope"] = *scope
 	}
 
 	return doRequest(http.MethodPost, baseURL+"/api/v1/memories", body)
@@ -223,13 +231,14 @@ func runGet(baseURL string, args []string) (interface{}, error) {
 
 func runUpdate(baseURL string, args []string) (interface{}, error) {
 	if len(args) == 0 || strings.HasPrefix(args[0], "-") {
-		return nil, fmt.Errorf("memory-id is required\nUsage: memory-cli update <memory-id> [--content TEXT] [--tag TAG ...]")
+		return nil, fmt.Errorf("memory-id is required\nUsage: memory-cli update <memory-id> [--content TEXT] [--tag TAG ...] [--scope SCOPE]")
 	}
 	memoryID := args[0]
 	rest := args[1:]
 
 	fs := flag.NewFlagSet("update", flag.ContinueOnError)
 	content := fs.String("content", "", "New content")
+	scope := fs.String("scope", "", "New visibility scope: 'private' or 'public'")
 	var tags tagList
 	fs.Var(&tags, "tag", "New tag (can be specified multiple times)")
 	if err := fs.Parse(rest); err != nil {
@@ -239,6 +248,9 @@ func runUpdate(baseURL string, args []string) (interface{}, error) {
 	body := map[string]interface{}{
 		"content": *content,
 		"tags":    []string(tags),
+	}
+	if *scope != "" {
+		body["scope"] = *scope
 	}
 
 	return doRequest(http.MethodPut, baseURL+"/api/v1/memories/"+memoryID, body)

@@ -56,9 +56,10 @@ func NewServer(ctx context.Context) (*Server, error) {
 // --- Tool input types ---
 
 type AddMemoryInput struct {
-	UserID  string   `json:"user_id" jsonschema:"User ID (default: 'default')"`
-	Content string   `json:"content" jsonschema:"Content of the memory"`
-	Tags    []string `json:"tags" jsonschema:"Tags for the memory"`
+	UserID  string        `json:"user_id" jsonschema:"User ID (default: 'default')"`
+	Content string        `json:"content" jsonschema:"Content of the memory"`
+	Tags    []string      `json:"tags" jsonschema:"Tags for the memory"`
+	Scope   memory.Scope  `json:"scope" jsonschema:"Visibility scope: 'private' (default, owner only) or 'public' (all users)"`
 }
 
 type SearchMemoriesInput struct {
@@ -79,9 +80,10 @@ type GetMemoryInput struct {
 }
 
 type UpdateMemoryInput struct {
-	MemoryID string   `json:"memory_id" jsonschema:"Memory ID"`
-	Content  string   `json:"content" jsonschema:"New content"`
-	Tags     []string `json:"tags" jsonschema:"New tags"`
+	MemoryID string       `json:"memory_id" jsonschema:"Memory ID"`
+	Content  string       `json:"content" jsonschema:"New content"`
+	Tags     []string     `json:"tags" jsonschema:"New tags"`
+	Scope    memory.Scope `json:"scope" jsonschema:"New visibility scope: 'private' (owner only) or 'public' (all users)"`
 }
 
 type DeleteMemoryInput struct {
@@ -158,6 +160,7 @@ func (s *Server) handleAddMemory(ctx context.Context, req *mcp.CallToolRequest, 
 		UserID:  input.UserID,
 		Content: input.Content,
 		Tags:    input.Tags,
+		Scope:   input.Scope,
 	})
 	if err != nil {
 		return errorResult(err.Error()), nil, nil
@@ -237,6 +240,7 @@ func (s *Server) handleUpdateMemory(ctx context.Context, req *mcp.CallToolReques
 		MemoryID: input.MemoryID,
 		Content:  input.Content,
 		Tags:     input.Tags,
+		Scope:    input.Scope,
 	})
 	if err != nil {
 		return errorResult(err.Error()), nil, nil

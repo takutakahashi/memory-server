@@ -34,6 +34,7 @@ type AddInput struct {
 	UserID  string
 	Content string
 	Tags    []string
+	Scope   Scope
 }
 
 // AddResult holds the result of Add.
@@ -50,6 +51,13 @@ func (s *Service) Add(ctx context.Context, input AddInput) (*AddResult, error) {
 	if input.Content == "" {
 		return nil, fmt.Errorf("content is required")
 	}
+	scope := input.Scope
+	if scope == "" {
+		scope = ScopePrivate
+	}
+	if scope != ScopePrivate && scope != ScopePublic {
+		return nil, fmt.Errorf("invalid scope: %q (must be %q or %q)", scope, ScopePrivate, ScopePublic)
+	}
 
 	embedding, err := s.Embedding.Generate(ctx, input.Content)
 	if err != nil {
@@ -59,13 +67,14 @@ func (s *Service) Add(ctx context.Context, input AddInput) (*AddResult, error) {
 	memoryID := uuid.New().String()
 	now := time.Now().UTC()
 
-	if err := s.Vectors.PutVectors(ctx, memoryID, embedding, userID); err != nil {
+	if err := s.Vectors.PutVectors(ctx, memoryID, embedding, userID, scope); err != nil {
 		return nil, fmt.Errorf("put vectors: %w", err)
 	}
 
 	m := &Memory{
 		MemoryID:       memoryID,
 		UserID:         userID,
+		Scope:          scope,
 		Content:        input.Content,
 		Tags:           input.Tags,
 		CreatedAt:      now,
@@ -114,6 +123,24 @@ func (s *Service) Search(ctx context.Context, input SearchInput) ([]*SearchResul
 
 	var vectorResults []*VectorResult
 
+	// mergeVectorResults deduplicates results keeping the highest score.
+	mergeVectorResults := func(a, b []*VectorResult) []*VectorResult {
+		scoreMap := make(map[string]*VectorResult, len(a)+len(b))
+		for _, r := range a {
+			scoreMap[r.Key] = r
+		}
+		for _, r := range b {
+			if existing, ok := scoreMap[r.Key]; !ok || r.Score > existing.Score {
+				scoreMap[r.Key] = r
+			}
+		}
+		merged := make([]*VectorResult, 0, len(scoreMap))
+		for _, v := range scoreMap {
+			merged = append(merged, v)
+		}
+		return merged
+	}
+
 	if len(tags) > 0 {
 		type tagResult struct {
 			results []*VectorResult
@@ -147,10 +174,20 @@ func (s *Service) Search(ctx context.Context, input SearchInput) ([]*SearchResul
 			vectorResults = append(vectorResults, v)
 		}
 	} else {
-		vectorResults, err = s.Vectors.QueryVectors(ctx, embedding, 50, userID)
-		if err != nil {
-			return nil, fmt.Errorf("query vectors: %w", err)
+		// Query user's own memories (any scope).
+		ownResults, qErr := s.Vectors.QueryVectors(ctx, embedding, 50, userID)
+		if qErr != nil {
+			return nil, fmt.Errorf("query vectors: %w", qErr)
 		}
+
+		// Also query public memories from all users.
+		publicResults, qErr := s.Vectors.QueryVectorsPublic(ctx, embedding, 50)
+		if qErr != nil {
+			// Non-fatal: public search may fail (e.g. empty index); continue with own results.
+			publicResults = nil
+		}
+
+		vectorResults = mergeVectorResults(ownResults, publicResults)
 	}
 
 	if len(vectorResults) == 0 {
@@ -175,7 +212,8 @@ func (s *Service) Search(ctx context.Context, input SearchInput) ([]*SearchResul
 	}
 	var scored []scoredMemory
 	for _, m := range memories {
-		if m.UserID != userID {
+		// Include if: own memory (any scope) OR public memory from another user.
+		if m.UserID != userID && m.Scope != ScopePublic {
 			continue
 		}
 		simScore := vectorScoreMap[m.MemoryID]
@@ -268,12 +306,17 @@ type UpdateInput struct {
 	MemoryID string
 	Content  string
 	Tags     []string
+	Scope    Scope
 }
 
-// Update modifies an existing memory's content and/or tags.
+// Update modifies an existing memory's content, tags, and/or scope.
 func (s *Service) Update(ctx context.Context, input UpdateInput) (*Memory, error) {
 	if input.MemoryID == "" {
 		return nil, fmt.Errorf("memory_id is required")
+	}
+
+	if input.Scope != "" && input.Scope != ScopePrivate && input.Scope != ScopePublic {
+		return nil, fmt.Errorf("invalid scope: %q (must be %q or %q)", input.Scope, ScopePrivate, ScopePublic)
 	}
 
 	m, err := s.Store.Get(ctx, input.MemoryID)
@@ -281,22 +324,47 @@ func (s *Service) Update(ctx context.Context, input UpdateInput) (*Memory, error
 		return nil, fmt.Errorf("get memory: %w", err)
 	}
 
-	if input.Content != "" && input.Content != m.Content {
-		embedding, embErr := s.Embedding.Generate(ctx, input.Content)
-		if embErr != nil {
-			return nil, fmt.Errorf("generate embedding: %w", embErr)
+	// Resolve effective scope.
+	newScope := m.Scope
+	if input.Scope != "" {
+		newScope = input.Scope
+	}
+	if newScope == "" {
+		newScope = ScopePrivate
+	}
+
+	contentChanged := input.Content != "" && input.Content != m.Content
+	scopeChanged := newScope != m.Scope
+
+	if contentChanged || scopeChanged {
+		// Re-embed if content changed; reuse existing embedding if only scope changed.
+		var embedding []float64
+		if contentChanged {
+			var embErr error
+			embedding, embErr = s.Embedding.Generate(ctx, input.Content)
+			if embErr != nil {
+				return nil, fmt.Errorf("generate embedding: %w", embErr)
+			}
+			m.Content = input.Content
+		} else {
+			// Re-generate embedding from existing content to re-store with updated metadata.
+			var embErr error
+			embedding, embErr = s.Embedding.Generate(ctx, m.Content)
+			if embErr != nil {
+				return nil, fmt.Errorf("generate embedding: %w", embErr)
+			}
 		}
 		_ = s.Vectors.DeleteVectors(ctx, []string{m.VectorID})
-		if putErr := s.Vectors.PutVectors(ctx, input.MemoryID, embedding, m.UserID); putErr != nil {
+		if putErr := s.Vectors.PutVectors(ctx, input.MemoryID, embedding, m.UserID, newScope); putErr != nil {
 			return nil, fmt.Errorf("put vectors: %w", putErr)
 		}
-		m.Content = input.Content
 		m.VectorID = input.MemoryID
 	}
 
 	if input.Tags != nil {
 		m.Tags = input.Tags
 	}
+	m.Scope = newScope
 	m.UpdatedAt = time.Now().UTC()
 
 	if err := s.Store.Update(ctx, m); err != nil {

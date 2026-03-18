@@ -103,7 +103,10 @@ type deleteVectorsRequest struct {
 }
 
 // PutVectors stores a vector in S3 Vectors.
-func (c *S3VectorsClient) PutVectors(ctx context.Context, key string, embedding []float64, userID string) error {
+func (c *S3VectorsClient) PutVectors(ctx context.Context, key string, embedding []float64, userID string, scope Scope) error {
+	if scope == "" {
+		scope = ScopePrivate
+	}
 	reqBody := putVectorsRequest{
 		VectorBucketName: c.bucketName,
 		IndexName:        c.indexName,
@@ -113,6 +116,7 @@ func (c *S3VectorsClient) PutVectors(ctx context.Context, key string, embedding 
 				Data: vectorData{Float32: embedding},
 				Metadata: map[string]interface{}{
 					"user_id": userID,
+					"scope":   string(scope),
 				},
 			},
 		},
@@ -121,7 +125,7 @@ func (c *S3VectorsClient) PutVectors(ctx context.Context, key string, embedding 
 	return c.doRequest(ctx, "/PutVectors", reqBody, nil)
 }
 
-// QueryVectors performs a similarity search in S3 Vectors.
+// QueryVectors performs a similarity search in S3 Vectors filtered by user_id.
 func (c *S3VectorsClient) QueryVectors(ctx context.Context, embedding []float64, topK int, userID string) ([]*VectorResult, error) {
 	reqBody := queryVectorsRequest{
 		VectorBucketName: c.bucketName,
@@ -138,6 +142,29 @@ func (c *S3VectorsClient) QueryVectors(ctx context.Context, embedding []float64,
 		}
 	}
 
+	return c.doQueryVectors(ctx, reqBody)
+}
+
+// QueryVectorsPublic performs a similarity search for public-scoped vectors across all users.
+func (c *S3VectorsClient) QueryVectorsPublic(ctx context.Context, embedding []float64, topK int) ([]*VectorResult, error) {
+	reqBody := queryVectorsRequest{
+		VectorBucketName: c.bucketName,
+		IndexName:        c.indexName,
+		TopK:             topK,
+		QueryVector:      vectorData{Float32: embedding},
+		ReturnMetadata:   true,
+		Filter: map[string]interface{}{
+			"scope": map[string]interface{}{
+				"$eq": string(ScopePublic),
+			},
+		},
+	}
+
+	return c.doQueryVectors(ctx, reqBody)
+}
+
+// doQueryVectors executes a query request and parses the response.
+func (c *S3VectorsClient) doQueryVectors(ctx context.Context, reqBody queryVectorsRequest) ([]*VectorResult, error) {
 	var resp queryVectorsResponse
 	if err := c.doRequest(ctx, "/QueryVectors", reqBody, &resp); err != nil {
 		return nil, err

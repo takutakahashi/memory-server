@@ -3,7 +3,7 @@ replicaCount: 1
 image:
   repository: ghcr.io/takutakahashi/memory-server
   pullPolicy: IfNotPresent
-  tag: "main"
+  tag: ""  # defaults to .Chart.AppVersion
 
 imagePullSecrets: []
 nameOverride: ""

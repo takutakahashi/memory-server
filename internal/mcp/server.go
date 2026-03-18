@@ -6,11 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
-	"sort"
-	"sync"
-	"time"
 
-	"github.com/google/uuid"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/takutakahashi/memory-server/internal/memory"
 
@@ -19,20 +15,12 @@ import (
 
 // Server holds all components for the Memory MCP server.
 type Server struct {
-	store     *memory.Store
-	vectors   *memory.S3VectorsClient
-	embedding *memory.EmbeddingClient
-	scorer    *memory.Scorer
+	svc       *memory.Service
 	mcpServer *mcp.Server
 }
 
-// NewServer creates a new Server by loading AWS config and initializing all components.
-func NewServer(ctx context.Context) (*Server, error) {
-	cfg, err := config.LoadDefaultConfig(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("load AWS config: %w", err)
-	}
-
+// NewServerWithService creates a new Server using an existing Service.
+func NewServerWithService(svc *memory.Service) *Server {
 	serverName := os.Getenv("MCP_SERVER_NAME")
 	if serverName == "" {
 		serverName = "memory-server"
@@ -43,10 +31,7 @@ func NewServer(ctx context.Context) (*Server, error) {
 	}
 
 	s := &Server{
-		store:     memory.NewStore(cfg),
-		vectors:   memory.NewS3VectorsClient(cfg),
-		embedding: memory.NewEmbeddingClient(cfg),
-		scorer:    memory.NewScorer(),
+		svc: svc,
 		mcpServer: mcp.NewServer(&mcp.Implementation{
 			Name:    serverName,
 			Version: serverVersion,
@@ -54,7 +39,18 @@ func NewServer(ctx context.Context) (*Server, error) {
 	}
 
 	s.registerTools()
-	return s, nil
+	return s
+}
+
+// NewServer creates a new Server by loading AWS config and initializing all components.
+func NewServer(ctx context.Context) (*Server, error) {
+	cfg, err := config.LoadDefaultConfig(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("load AWS config: %w", err)
+	}
+
+	svc := memory.NewService(cfg)
+	return NewServerWithService(svc), nil
 }
 
 // --- Tool input types ---
@@ -124,13 +120,8 @@ func (s *Server) registerTools() {
 	}, s.handleDeleteMemory)
 }
 
-// Start starts the MCP server over SSE and Streamable HTTP.
-func (s *Server) Start(port string) error {
-	if port == "" {
-		port = "8080"
-	}
-	addr := ":" + port
-
+// RegisterRoutes registers the MCP-specific routes (/sse and /mcp) on the given mux.
+func (s *Server) RegisterRoutes(mux *http.ServeMux) {
 	getServer := func(req *http.Request) *mcp.Server {
 		return s.mcpServer
 	}
@@ -138,14 +129,24 @@ func (s *Server) Start(port string) error {
 	sseHandler := mcp.NewSSEHandler(getServer, nil)
 	streamableHandler := mcp.NewStreamableHTTPHandler(getServer, nil)
 
+	mux.Handle("/sse", sseHandler)
+	mux.Handle("/mcp", streamableHandler)
+}
+
+// Start starts the MCP server over SSE and Streamable HTTP.
+func (s *Server) Start(port string) error {
+	if port == "" {
+		port = "8080"
+	}
+	addr := ":" + port
+
 	mux := http.NewServeMux()
 	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
 		_, _ = fmt.Fprint(w, `{"status":"ok"}`)
 	})
-	mux.Handle("/sse", sseHandler)
-	mux.Handle("/mcp", streamableHandler)
+	s.RegisterRoutes(mux)
 
 	return http.ListenAndServe(addr, mux)
 }
@@ -153,208 +154,68 @@ func (s *Server) Start(port string) error {
 // --- Tool handlers ---
 
 func (s *Server) handleAddMemory(ctx context.Context, req *mcp.CallToolRequest, input AddMemoryInput) (*mcp.CallToolResult, any, error) {
-	userID := input.UserID
-	if userID == "" {
-		userID = "default"
-	}
-	content := input.Content
-	if content == "" {
-		return errorResult("content is required"), nil, nil
-	}
-	tags := input.Tags
-
-	// Generate embedding
-	embedding, err := s.embedding.Generate(ctx, content)
+	result, err := s.svc.Add(ctx, memory.AddInput{
+		UserID:  input.UserID,
+		Content: input.Content,
+		Tags:    input.Tags,
+	})
 	if err != nil {
-		return errorResult(fmt.Sprintf("generate embedding: %v", err)), nil, nil
-	}
-
-	memoryID := uuid.New().String()
-	now := time.Now().UTC()
-
-	// Put vector
-	if err := s.vectors.PutVectors(ctx, memoryID, embedding, userID); err != nil {
-		return errorResult(fmt.Sprintf("put vectors: %v", err)), nil, nil
-	}
-
-	// Save to DynamoDB
-	m := &memory.Memory{
-		MemoryID:       memoryID,
-		UserID:         userID,
-		Content:        content,
-		Tags:           tags,
-		CreatedAt:      now,
-		UpdatedAt:      now,
-		LastAccessedAt: now,
-		AccessCount:    0,
-		VectorID:       memoryID,
-	}
-	if err := s.store.Put(ctx, m); err != nil {
-		return errorResult(fmt.Sprintf("store memory: %v", err)), nil, nil
+		return errorResult(err.Error()), nil, nil
 	}
 
 	return jsonResult(map[string]string{
-		"memory_id": memoryID,
+		"memory_id": result.MemoryID,
 		"status":    "ok",
 	})
 }
 
 func (s *Server) handleSearchMemories(ctx context.Context, req *mcp.CallToolRequest, input SearchMemoriesInput) (*mcp.CallToolResult, any, error) {
-	userID := input.UserID
-	if userID == "" {
-		userID = "default"
-	}
-	query := input.Query
-	if query == "" {
-		return errorResult("query is required"), nil, nil
-	}
-	tags := input.Tags
-	if len(tags) > 5 {
-		tags = tags[:5]
-	}
-	limit := input.Limit
-	if limit == 0 {
-		limit = 10
-	}
-
-	// Generate embedding for query
-	embedding, err := s.embedding.Generate(ctx, query)
+	results, err := s.svc.Search(ctx, memory.SearchInput{
+		UserID: input.UserID,
+		Query:  input.Query,
+		Tags:   input.Tags,
+		Limit:  input.Limit,
+	})
 	if err != nil {
-		return errorResult(fmt.Sprintf("generate query embedding: %v", err)), nil, nil
+		return errorResult(err.Error()), nil, nil
 	}
 
-	var vectorResults []*memory.VectorResult
-
-	if len(tags) > 0 {
-		// Parallel queries per tag
-		type tagResult struct {
-			results []*memory.VectorResult
-			err     error
-		}
-		resultCh := make(chan tagResult, len(tags))
-		var wg sync.WaitGroup
-		for _, tag := range tags {
-			wg.Add(1)
-			go func(t string) {
-				defer wg.Done()
-				results, qErr := s.vectors.QueryVectorsWithTag(ctx, embedding, 20, userID, t)
-				resultCh <- tagResult{results: results, err: qErr}
-			}(tag)
-		}
-		wg.Wait()
-		close(resultCh)
-
-		// Merge results (max score per key)
-		scoreMap := make(map[string]*memory.VectorResult)
-		for tr := range resultCh {
-			if tr.err != nil {
-				continue // best effort
-			}
-			for _, r := range tr.results {
-				if existing, ok := scoreMap[r.Key]; !ok || r.Score > existing.Score {
-					scoreMap[r.Key] = r
-				}
-			}
-		}
-		for _, v := range scoreMap {
-			vectorResults = append(vectorResults, v)
-		}
-	} else {
-		vectorResults, err = s.vectors.QueryVectors(ctx, embedding, 50, userID)
-		if err != nil {
-			return errorResult(fmt.Sprintf("query vectors: %v", err)), nil, nil
-		}
-	}
-
-	if len(vectorResults) == 0 {
+	if len(results) == 0 {
 		return jsonResult([]interface{}{})
 	}
 
-	// Get memory IDs and build score map
-	vectorScoreMap := make(map[string]float64, len(vectorResults))
-	memoryIDs := make([]string, 0, len(vectorResults))
-	for _, vr := range vectorResults {
-		vectorScoreMap[vr.Key] = vr.Score
-		memoryIDs = append(memoryIDs, vr.Key)
-	}
-
-	// Fetch metadata from DynamoDB
-	memories, err := s.store.GetByIDs(ctx, memoryIDs)
-	if err != nil {
-		return errorResult(fmt.Sprintf("get memories: %v", err)), nil, nil
-	}
-
-	// Filter by user_id and score
-	type scoredMemory struct {
-		m     *memory.Memory
-		score float64
-	}
-	var scored []scoredMemory
-	for _, m := range memories {
-		if m.UserID != userID {
-			continue
-		}
-		simScore := vectorScoreMap[m.MemoryID]
-		finalScore := s.scorer.Score(simScore, m)
-		scored = append(scored, scoredMemory{m: m, score: finalScore})
-	}
-
-	// Sort by final score descending
-	sort.Slice(scored, func(i, j int) bool {
-		return scored[i].score > scored[j].score
-	})
-
-	// Limit results
-	if len(scored) > limit {
-		scored = scored[:limit]
-	}
-
-	// Async update access metadata
-	go func() {
-		bgCtx := context.Background()
-		for _, sm := range scored {
-			_ = s.store.UpdateAccess(bgCtx, sm.m.MemoryID)
-		}
-	}()
-
-	// Build response
-	results := make([]map[string]interface{}, 0, len(scored))
-	for _, sm := range scored {
-		results = append(results, map[string]interface{}{
-			"memory":           sm.m,
-			"similarity_score": vectorScoreMap[sm.m.MemoryID],
-			"final_score":      sm.score,
+	out := make([]map[string]interface{}, 0, len(results))
+	for _, r := range results {
+		out = append(out, map[string]interface{}{
+			"memory":           r.Memory,
+			"similarity_score": r.SimilarityScore,
+			"final_score":      r.FinalScore,
 		})
 	}
 
-	return jsonResult(results)
+	return jsonResult(out)
 }
 
 func (s *Server) handleListMemories(ctx context.Context, req *mcp.CallToolRequest, input ListMemoriesInput) (*mcp.CallToolResult, any, error) {
-	userID := input.UserID
-	if userID == "" {
-		userID = "default"
-	}
-	limit := input.Limit
-	if limit == 0 {
-		limit = 20
-	}
-	nextTokenStr := input.NextToken
 	var nextToken *string
-	if nextTokenStr != "" {
-		nextToken = &nextTokenStr
+	if input.NextToken != "" {
+		nextToken = &input.NextToken
 	}
 
-	memories, newNextToken, err := s.store.ListByUserID(ctx, userID, limit, nextToken)
+	result, err := s.svc.List(ctx, memory.ListInput{
+		UserID:    input.UserID,
+		Limit:     input.Limit,
+		NextToken: nextToken,
+	})
 	if err != nil {
-		return errorResult(fmt.Sprintf("list memories: %v", err)), nil, nil
+		return errorResult(err.Error()), nil, nil
 	}
 
 	resp := map[string]interface{}{
-		"memories": memories,
+		"memories": result.Memories,
 	}
-	if newNextToken != nil {
-		resp["next_token"] = *newNextToken
+	if result.NextToken != nil {
+		resp["next_token"] = *result.NextToken
 	} else {
 		resp["next_token"] = ""
 	}
@@ -363,79 +224,30 @@ func (s *Server) handleListMemories(ctx context.Context, req *mcp.CallToolReques
 }
 
 func (s *Server) handleGetMemory(ctx context.Context, req *mcp.CallToolRequest, input GetMemoryInput) (*mcp.CallToolResult, any, error) {
-	memoryID := input.MemoryID
-	if memoryID == "" {
-		return errorResult("memory_id is required"), nil, nil
-	}
-
-	m, err := s.store.Get(ctx, memoryID)
+	m, err := s.svc.Get(ctx, input.MemoryID)
 	if err != nil {
-		return errorResult(fmt.Sprintf("get memory: %v", err)), nil, nil
+		return errorResult(err.Error()), nil, nil
 	}
-
-	// Update access count asynchronously
-	go func() {
-		_ = s.store.UpdateAccess(context.Background(), memoryID)
-	}()
 
 	return jsonResult(m)
 }
 
 func (s *Server) handleUpdateMemory(ctx context.Context, req *mcp.CallToolRequest, input UpdateMemoryInput) (*mcp.CallToolResult, any, error) {
-	memoryID := input.MemoryID
-	if memoryID == "" {
-		return errorResult("memory_id is required"), nil, nil
-	}
-
-	newContent := input.Content
-	newTags := input.Tags
-
-	m, err := s.store.Get(ctx, memoryID)
+	m, err := s.svc.Update(ctx, memory.UpdateInput{
+		MemoryID: input.MemoryID,
+		Content:  input.Content,
+		Tags:     input.Tags,
+	})
 	if err != nil {
-		return errorResult(fmt.Sprintf("get memory: %v", err)), nil, nil
-	}
-
-	contentChanged := newContent != "" && newContent != m.Content
-	if contentChanged {
-		// Re-embed and update vectors
-		embedding, embErr := s.embedding.Generate(ctx, newContent)
-		if embErr != nil {
-			return errorResult(fmt.Sprintf("generate embedding: %v", embErr)), nil, nil
-		}
-		// Delete old vector (best effort)
-		_ = s.vectors.DeleteVectors(ctx, []string{m.VectorID})
-		// Put new vector
-		if putErr := s.vectors.PutVectors(ctx, memoryID, embedding, m.UserID); putErr != nil {
-			return errorResult(fmt.Sprintf("put vectors: %v", putErr)), nil, nil
-		}
-		m.Content = newContent
-		m.VectorID = memoryID
-	}
-
-	if newTags != nil {
-		m.Tags = newTags
-	}
-	m.UpdatedAt = time.Now().UTC()
-
-	if err := s.store.Update(ctx, m); err != nil {
-		return errorResult(fmt.Sprintf("update memory: %v", err)), nil, nil
+		return errorResult(err.Error()), nil, nil
 	}
 
 	return jsonResult(m)
 }
 
 func (s *Server) handleDeleteMemory(ctx context.Context, req *mcp.CallToolRequest, input DeleteMemoryInput) (*mcp.CallToolResult, any, error) {
-	memoryID := input.MemoryID
-	if memoryID == "" {
-		return errorResult("memory_id is required"), nil, nil
-	}
-
-	// Delete from S3 Vectors (best effort - DynamoDB is source of truth)
-	_ = s.vectors.DeleteVectors(ctx, []string{memoryID})
-
-	// Delete from DynamoDB
-	if err := s.store.Delete(ctx, memoryID); err != nil {
-		return errorResult(fmt.Sprintf("delete memory: %v", err)), nil, nil
+	if err := s.svc.Delete(ctx, input.MemoryID); err != nil {
+		return errorResult(err.Error()), nil, nil
 	}
 
 	return jsonResult(map[string]string{"status": "ok"})

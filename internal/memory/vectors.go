@@ -40,7 +40,7 @@ func NewS3VectorsClient(cfg aws.Config) *S3VectorsClient {
 		region = "ap-northeast-1"
 	}
 
-	endpoint := fmt.Sprintf("https://s3vectors.%s.amazonaws.com", region)
+	endpoint := fmt.Sprintf("https://s3vectors.%s.api.aws", region)
 
 	return &S3VectorsClient{
 		cfg:        cfg,

@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log"
 	"net/http"
@@ -22,22 +23,34 @@ func main() {
 	}
 
 	svc := memory.NewService(cfg)
+	userStore := memory.NewUserStore(cfg)
+	userSvc := &memory.UserService{Store: userStore}
 
 	mux := http.NewServeMux()
 
 	// Health check
 	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
+		ctx := r.Context()
+		if err := svc.Store.Ping(ctx); err != nil {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusServiceUnavailable)
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{
+				"status":  "error",
+				"dynamodb": err.Error(),
+			})
+			return
+		}
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
-		_, _ = fmt.Fprint(w, `{"status":"ok"}`)
+		_ = json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
 	})
 
 	// MCP routes
-	mcpSrv := mcpserver.NewServerWithService(svc)
+	mcpSrv := mcpserver.NewServerWithService(svc, userSvc)
 	mcpSrv.RegisterRoutes(mux)
 
 	// REST API routes
-	apiSrv := api.New(svc)
+	apiSrv := api.New(svc, userSvc)
 	apiSrv.RegisterRoutes(mux)
 
 	port := os.Getenv("PORT")
@@ -49,4 +62,6 @@ func main() {
 	if err := http.ListenAndServe(":"+port, mux); err != nil {
 		log.Fatalf("server error: %v", err)
 	}
+
+	_ = fmt.Sprintf // avoid unused import
 }

@@ -15,12 +15,14 @@ import (
 
 // Server holds all components for the Memory MCP server.
 type Server struct {
-	svc       *memory.Service
-	mcpServer *mcp.Server
+	svc          *memory.Service
+	userSvc      *memory.UserService
+	defaultToken string
+	mcpServer    *mcp.Server
 }
 
 // NewServerWithService creates a new Server using an existing Service.
-func NewServerWithService(svc *memory.Service) *Server {
+func NewServerWithService(svc *memory.Service, userSvc *memory.UserService) *Server {
 	serverName := os.Getenv("MCP_SERVER_NAME")
 	if serverName == "" {
 		serverName = "memory-server"
@@ -29,9 +31,12 @@ func NewServerWithService(svc *memory.Service) *Server {
 	if serverVersion == "" {
 		serverVersion = "1.0.0"
 	}
+	defaultToken := os.Getenv("MCP_TOKEN")
 
 	s := &Server{
-		svc: svc,
+		svc:          svc,
+		userSvc:      userSvc,
+		defaultToken: defaultToken,
 		mcpServer: mcp.NewServer(&mcp.Implementation{
 			Name:    serverName,
 			Version: serverVersion,
@@ -50,36 +55,39 @@ func NewServer(ctx context.Context) (*Server, error) {
 	}
 
 	svc := memory.NewService(cfg)
-	return NewServerWithService(svc), nil
+	userSvc := &memory.UserService{Store: memory.NewUserStore(cfg)}
+	return NewServerWithService(svc, userSvc), nil
 }
 
 // --- Tool input types ---
 
 type AddMemoryInput struct {
-	UserID  string        `json:"user_id" jsonschema:"User ID (default: 'default')"`
-	Content string        `json:"content" jsonschema:"Content of the memory"`
-	Tags    []string      `json:"tags" jsonschema:"Tags for the memory"`
-	Scope   memory.Scope  `json:"scope" jsonschema:"Visibility scope: 'private' (default, owner only) or 'public' (all users)"`
+	Token   string       `json:"token" jsonschema:"Auth token (optional if MCP_TOKEN env var is set)"`
+	Content string       `json:"content" jsonschema:"Content of the memory"`
+	Tags    []string     `json:"tags" jsonschema:"Tags for the memory"`
+	Scope   memory.Scope `json:"scope" jsonschema:"Visibility scope: 'private' (default, owner only) or 'public' (all users)"`
 }
 
 type SearchMemoriesInput struct {
-	UserID string   `json:"user_id" jsonschema:"User ID (default: 'default')"`
-	Query  string   `json:"query" jsonschema:"Natural language search query"`
-	Tags   []string `json:"tags" jsonschema:"Tags for OR-filtered search (max 5)"`
-	Limit  int      `json:"limit" jsonschema:"Number of results to return (default: 10)"`
+	Token string   `json:"token" jsonschema:"Auth token (optional if MCP_TOKEN env var is set)"`
+	Query string   `json:"query" jsonschema:"Natural language search query"`
+	Tags  []string `json:"tags" jsonschema:"Tags for OR-filtered search (max 5)"`
+	Limit int      `json:"limit" jsonschema:"Number of results to return (default: 10)"`
 }
 
 type ListMemoriesInput struct {
-	UserID    string `json:"user_id" jsonschema:"User ID (default: 'default')"`
+	Token     string `json:"token" jsonschema:"Auth token (optional if MCP_TOKEN env var is set)"`
 	Limit     int    `json:"limit" jsonschema:"Number of results per page (default: 20)"`
 	NextToken string `json:"next_token" jsonschema:"Pagination token"`
 }
 
 type GetMemoryInput struct {
+	Token    string `json:"token" jsonschema:"Auth token (optional if MCP_TOKEN env var is set)"`
 	MemoryID string `json:"memory_id" jsonschema:"Memory ID"`
 }
 
 type UpdateMemoryInput struct {
+	Token    string       `json:"token" jsonschema:"Auth token (optional if MCP_TOKEN env var is set)"`
 	MemoryID string       `json:"memory_id" jsonschema:"Memory ID"`
 	Content  string       `json:"content" jsonschema:"New content"`
 	Tags     []string     `json:"tags" jsonschema:"New tags"`
@@ -87,7 +95,24 @@ type UpdateMemoryInput struct {
 }
 
 type DeleteMemoryInput struct {
+	Token    string `json:"token" jsonschema:"Auth token (optional if MCP_TOKEN env var is set)"`
 	MemoryID string `json:"memory_id" jsonschema:"Memory ID"`
+}
+
+// resolveUserID resolves the user ID from the given token or falls back to defaultToken.
+func (s *Server) resolveUserID(ctx context.Context, token string) (string, error) {
+	t := token
+	if t == "" {
+		t = s.defaultToken
+	}
+	if t == "" {
+		return "", fmt.Errorf("authentication required: provide token or set MCP_TOKEN env var")
+	}
+	user, err := s.userSvc.ResolveUserByToken(ctx, t)
+	if err != nil {
+		return "", fmt.Errorf("invalid token")
+	}
+	return user.UserID, nil
 }
 
 func (s *Server) registerTools() {
@@ -156,8 +181,13 @@ func (s *Server) Start(port string) error {
 // --- Tool handlers ---
 
 func (s *Server) handleAddMemory(ctx context.Context, req *mcp.CallToolRequest, input AddMemoryInput) (*mcp.CallToolResult, any, error) {
+	userID, err := s.resolveUserID(ctx, input.Token)
+	if err != nil {
+		return errorResult(err.Error()), nil, nil
+	}
+
 	result, err := s.svc.Add(ctx, memory.AddInput{
-		UserID:  input.UserID,
+		UserID:  userID,
 		Content: input.Content,
 		Tags:    input.Tags,
 		Scope:   input.Scope,
@@ -173,8 +203,13 @@ func (s *Server) handleAddMemory(ctx context.Context, req *mcp.CallToolRequest, 
 }
 
 func (s *Server) handleSearchMemories(ctx context.Context, req *mcp.CallToolRequest, input SearchMemoriesInput) (*mcp.CallToolResult, any, error) {
+	userID, err := s.resolveUserID(ctx, input.Token)
+	if err != nil {
+		return errorResult(err.Error()), nil, nil
+	}
+
 	results, err := s.svc.Search(ctx, memory.SearchInput{
-		UserID: input.UserID,
+		UserID: userID,
 		Query:  input.Query,
 		Tags:   input.Tags,
 		Limit:  input.Limit,
@@ -200,13 +235,18 @@ func (s *Server) handleSearchMemories(ctx context.Context, req *mcp.CallToolRequ
 }
 
 func (s *Server) handleListMemories(ctx context.Context, req *mcp.CallToolRequest, input ListMemoriesInput) (*mcp.CallToolResult, any, error) {
+	userID, err := s.resolveUserID(ctx, input.Token)
+	if err != nil {
+		return errorResult(err.Error()), nil, nil
+	}
+
 	var nextToken *string
 	if input.NextToken != "" {
 		nextToken = &input.NextToken
 	}
 
 	result, err := s.svc.List(ctx, memory.ListInput{
-		UserID:    input.UserID,
+		UserID:    userID,
 		Limit:     input.Limit,
 		NextToken: nextToken,
 	})
@@ -227,6 +267,11 @@ func (s *Server) handleListMemories(ctx context.Context, req *mcp.CallToolReques
 }
 
 func (s *Server) handleGetMemory(ctx context.Context, req *mcp.CallToolRequest, input GetMemoryInput) (*mcp.CallToolResult, any, error) {
+	_, err := s.resolveUserID(ctx, input.Token)
+	if err != nil {
+		return errorResult(err.Error()), nil, nil
+	}
+
 	m, err := s.svc.Get(ctx, input.MemoryID)
 	if err != nil {
 		return errorResult(err.Error()), nil, nil
@@ -236,6 +281,11 @@ func (s *Server) handleGetMemory(ctx context.Context, req *mcp.CallToolRequest, 
 }
 
 func (s *Server) handleUpdateMemory(ctx context.Context, req *mcp.CallToolRequest, input UpdateMemoryInput) (*mcp.CallToolResult, any, error) {
+	_, err := s.resolveUserID(ctx, input.Token)
+	if err != nil {
+		return errorResult(err.Error()), nil, nil
+	}
+
 	m, err := s.svc.Update(ctx, memory.UpdateInput{
 		MemoryID: input.MemoryID,
 		Content:  input.Content,
@@ -250,6 +300,11 @@ func (s *Server) handleUpdateMemory(ctx context.Context, req *mcp.CallToolReques
 }
 
 func (s *Server) handleDeleteMemory(ctx context.Context, req *mcp.CallToolRequest, input DeleteMemoryInput) (*mcp.CallToolResult, any, error) {
+	_, err := s.resolveUserID(ctx, input.Token)
+	if err != nil {
+		return errorResult(err.Error()), nil, nil
+	}
+
 	if err := s.svc.Delete(ctx, input.MemoryID); err != nil {
 		return errorResult(err.Error()), nil, nil
 	}

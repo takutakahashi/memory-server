@@ -8,7 +8,6 @@ import (
 	"io"
 	"net/http"
 	"os"
-	"path/filepath"
 	"strings"
 	"text/tabwriter"
 )
@@ -25,52 +24,11 @@ func (t *tagList) Set(v string) error {
 	return nil
 }
 
-// tokenFilePath returns the path to the stored token file.
-func tokenFilePath() string {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return ""
-	}
-	return filepath.Join(home, ".config", "memory-cli", "token")
-}
-
-// loadToken resolves token in priority order: flag -> env -> file.
-func loadToken(flagToken string) string {
-	if flagToken != "" {
-		return flagToken
-	}
-	if v := os.Getenv("MEMORY_TOKEN"); v != "" {
-		return v
-	}
-	p := tokenFilePath()
-	if p == "" {
-		return ""
-	}
-	b, err := os.ReadFile(p)
-	if err != nil {
-		return ""
-	}
-	return strings.TrimSpace(string(b))
-}
-
-// saveToken saves the token to the config file.
-func saveToken(token string) error {
-	p := tokenFilePath()
-	if p == "" {
-		return fmt.Errorf("cannot determine home directory")
-	}
-	if err := os.MkdirAll(filepath.Dir(p), 0700); err != nil {
-		return fmt.Errorf("create config dir: %w", err)
-	}
-	return os.WriteFile(p, []byte(token+"\n"), 0600)
-}
-
 func main() {
 	// Global flags
 	globalFlags := flag.NewFlagSet("memory-cli", flag.ContinueOnError)
 	serverURL := globalFlags.String("server", "", "Server base URL (overrides MEMORY_SERVER_URL)")
 	rawJSON := globalFlags.Bool("json", false, "Output raw JSON")
-	tokenFlag := globalFlags.String("token", "", "Auth token (overrides MEMORY_TOKEN env and ~/.config/memory-cli/token)")
 	format := globalFlags.String("format", "", "Output format: table, json, pretty")
 
 	// Parse only up to the subcommand
@@ -97,17 +55,6 @@ func main() {
 			continue
 		}
 		if arg == "--json" || arg == "-json" {
-			globalArgs = append(globalArgs, arg)
-			continue
-		}
-		if arg == "--token" || arg == "-token" {
-			if i+1 < len(os.Args) {
-				globalArgs = append(globalArgs, arg, os.Args[i+1])
-				i++
-			}
-			continue
-		}
-		if strings.HasPrefix(arg, "--token=") || strings.HasPrefix(arg, "-token=") {
 			globalArgs = append(globalArgs, arg)
 			continue
 		}
@@ -143,9 +90,6 @@ func main() {
 	// Remove trailing slash
 	baseURL = strings.TrimRight(baseURL, "/")
 
-	// Resolve token
-	token := loadToken(*tokenFlag)
-
 	if subcommand == "" {
 		printUsage()
 		os.Exit(1)
@@ -155,32 +99,18 @@ func main() {
 	var err error
 
 	switch subcommand {
-	case "register":
-		result, err = runRegister(baseURL, subArgs)
-		if err == nil {
-			// Save token if registration succeeded
-			if m, ok := result.(map[string]interface{}); ok {
-				if t, ok := m["token"].(string); ok && t != "" {
-					if saveErr := saveToken(t); saveErr != nil {
-						fmt.Fprintf(os.Stderr, "warning: could not save token: %v\n", saveErr)
-					} else {
-						fmt.Fprintf(os.Stderr, "Token saved to %s\n", tokenFilePath())
-					}
-				}
-			}
-		}
 	case "add":
-		result, err = runAdd(baseURL, token, subArgs)
+		result, err = runAdd(baseURL, subArgs)
 	case "search":
-		result, err = runSearch(baseURL, token, subArgs)
+		result, err = runSearch(baseURL, subArgs)
 	case "list":
-		result, err = runList(baseURL, token, subArgs)
+		result, err = runList(baseURL, subArgs)
 	case "get":
-		result, err = runGet(baseURL, token, subArgs)
+		result, err = runGet(baseURL, subArgs)
 	case "update":
-		result, err = runUpdate(baseURL, token, subArgs)
+		result, err = runUpdate(baseURL, subArgs)
 	case "delete":
-		result, err = runDelete(baseURL, token, subArgs)
+		result, err = runDelete(baseURL, subArgs)
 	default:
 		fmt.Fprintf(os.Stderr, "unknown command: %s\n", subcommand)
 		printUsage()
@@ -215,10 +145,9 @@ func main() {
 }
 
 func printUsage() {
-	fmt.Fprintf(os.Stderr, `Usage: memory-cli [--server URL] [--token TOKEN] [--format table|json|pretty] [--json] <command> [options]
+	fmt.Fprintf(os.Stderr, `Usage: memory-cli [--server URL] [--format table|json|pretty] [--json] <command> [options]
 
 Commands:
-  register
   add     --content TEXT [--tag TAG ...] [--scope SCOPE]
   search  --query TEXT [--tag TAG ...] [--limit N]
   list    [--limit N] [--next-token TOKEN]
@@ -232,12 +161,10 @@ Scope values:
 
 Environment:
   MEMORY_SERVER_URL  Server base URL (default: http://localhost:8080)
-  MEMORY_TOKEN       Auth token
-  MEMORY_USER_ID     Default user ID (legacy, for backward compatibility)
+  MEMORY_USER_ID     Default user ID
 
 Options:
   --server URL              Override server URL
-  --token TOKEN             Auth token (overrides MEMORY_TOKEN env and ~/.config/memory-cli/token)
   --format table|json|pretty  Output format (default: table)
   --json                    Output raw JSON (backward compatible, same as --format json)
 `)
@@ -256,7 +183,7 @@ func printTable(subcommand string, result interface{}) {
 		printSearchResults(raw)
 	case "get":
 		printSingleMemory(raw)
-	case "add", "register", "delete", "update":
+	case "add", "delete", "update":
 		// For these, print key-value
 		if m, ok := raw.(map[string]interface{}); ok {
 			printKeyValue(m)
@@ -402,13 +329,9 @@ func tagsStr(v interface{}) string {
 	return strings.Join(strs, ",")
 }
 
-func runRegister(baseURL string, _ []string) (interface{}, error) {
-	return doRequest(http.MethodPost, baseURL+"/api/v1/users", nil, "")
-}
-
-func runAdd(baseURL, token string, args []string) (interface{}, error) {
+func runAdd(baseURL string, args []string) (interface{}, error) {
 	fs := flag.NewFlagSet("add", flag.ContinueOnError)
-	userID := fs.String("user-id", os.Getenv("MEMORY_USER_ID"), "User ID (legacy, ignored when token is set)")
+	userID := fs.String("user-id", os.Getenv("MEMORY_USER_ID"), "User ID")
 	content := fs.String("content", "", "Content of the memory")
 	scope := fs.String("scope", "", "Visibility scope: 'private' (default) or 'public'")
 	var tags tagList
@@ -425,19 +348,19 @@ func runAdd(baseURL, token string, args []string) (interface{}, error) {
 		"content": *content,
 		"tags":    []string(tags),
 	}
-	if token == "" && *userID != "" {
+	if *userID != "" {
 		body["user_id"] = *userID
 	}
 	if *scope != "" {
 		body["scope"] = *scope
 	}
 
-	return doRequest(http.MethodPost, baseURL+"/api/v1/memories", body, token)
+	return doRequest(http.MethodPost, baseURL+"/api/v1/memories", body)
 }
 
-func runSearch(baseURL, token string, args []string) (interface{}, error) {
+func runSearch(baseURL string, args []string) (interface{}, error) {
 	fs := flag.NewFlagSet("search", flag.ContinueOnError)
-	userID := fs.String("user-id", os.Getenv("MEMORY_USER_ID"), "User ID (legacy, ignored when token is set)")
+	userID := fs.String("user-id", os.Getenv("MEMORY_USER_ID"), "User ID")
 	query := fs.String("query", "", "Search query")
 	limit := fs.Int("limit", 0, "Number of results")
 	var tags tagList
@@ -455,16 +378,16 @@ func runSearch(baseURL, token string, args []string) (interface{}, error) {
 		"tags":  []string(tags),
 		"limit": *limit,
 	}
-	if token == "" && *userID != "" {
+	if *userID != "" {
 		body["user_id"] = *userID
 	}
 
-	return doRequest(http.MethodPost, baseURL+"/api/v1/memories/search", body, token)
+	return doRequest(http.MethodPost, baseURL+"/api/v1/memories/search", body)
 }
 
-func runList(baseURL, token string, args []string) (interface{}, error) {
+func runList(baseURL string, args []string) (interface{}, error) {
 	fs := flag.NewFlagSet("list", flag.ContinueOnError)
-	userID := fs.String("user-id", os.Getenv("MEMORY_USER_ID"), "User ID (legacy, ignored when token is set)")
+	userID := fs.String("user-id", os.Getenv("MEMORY_USER_ID"), "User ID")
 	limit := fs.Int("limit", 0, "Number of results per page")
 	nextToken := fs.String("next-token", "", "Pagination token")
 	if err := fs.Parse(args); err != nil {
@@ -473,7 +396,7 @@ func runList(baseURL, token string, args []string) (interface{}, error) {
 
 	url := baseURL + "/api/v1/memories"
 	params := []string{}
-	if token == "" && *userID != "" {
+	if *userID != "" {
 		params = append(params, "user_id="+*userID)
 	}
 	if *limit > 0 {
@@ -486,18 +409,18 @@ func runList(baseURL, token string, args []string) (interface{}, error) {
 		url += "?" + strings.Join(params, "&")
 	}
 
-	return doRequest(http.MethodGet, url, nil, token)
+	return doRequest(http.MethodGet, url, nil)
 }
 
-func runGet(baseURL, token string, args []string) (interface{}, error) {
+func runGet(baseURL string, args []string) (interface{}, error) {
 	if len(args) == 0 || args[0] == "" {
 		return nil, fmt.Errorf("memory-id is required\nUsage: memory-cli get <memory-id>")
 	}
 	memoryID := args[0]
-	return doRequest(http.MethodGet, baseURL+"/api/v1/memories/"+memoryID, nil, token)
+	return doRequest(http.MethodGet, baseURL+"/api/v1/memories/"+memoryID, nil)
 }
 
-func runUpdate(baseURL, token string, args []string) (interface{}, error) {
+func runUpdate(baseURL string, args []string) (interface{}, error) {
 	if len(args) == 0 || strings.HasPrefix(args[0], "-") {
 		return nil, fmt.Errorf("memory-id is required\nUsage: memory-cli update <memory-id> [--content TEXT] [--tag TAG ...] [--add-tag TAG ...] [--remove-tag TAG ...] [--scope SCOPE]")
 	}
@@ -520,7 +443,7 @@ func runUpdate(baseURL, token string, args []string) (interface{}, error) {
 	// If add-tag or remove-tag specified, fetch current memory first
 	finalTags := []string(tags)
 	if len(addTags) > 0 || len(removeTags) > 0 {
-		current, err := doRequest(http.MethodGet, baseURL+"/api/v1/memories/"+memoryID, nil, token)
+		current, err := doRequest(http.MethodGet, baseURL+"/api/v1/memories/"+memoryID, nil)
 		if err != nil {
 			return nil, fmt.Errorf("fetch current memory: %w", err)
 		}
@@ -575,19 +498,19 @@ func runUpdate(baseURL, token string, args []string) (interface{}, error) {
 		body["scope"] = *scope
 	}
 
-	return doRequest(http.MethodPut, baseURL+"/api/v1/memories/"+memoryID, body, token)
+	return doRequest(http.MethodPut, baseURL+"/api/v1/memories/"+memoryID, body)
 }
 
-func runDelete(baseURL, token string, args []string) (interface{}, error) {
+func runDelete(baseURL string, args []string) (interface{}, error) {
 	if len(args) == 0 || args[0] == "" {
 		return nil, fmt.Errorf("memory-id is required\nUsage: memory-cli delete <memory-id>")
 	}
 	memoryID := args[0]
-	return doRequest(http.MethodDelete, baseURL+"/api/v1/memories/"+memoryID, nil, token)
+	return doRequest(http.MethodDelete, baseURL+"/api/v1/memories/"+memoryID, nil)
 }
 
 // doRequest performs an HTTP request and returns the parsed JSON response.
-func doRequest(method, url string, body interface{}, token string) (interface{}, error) {
+func doRequest(method, url string, body interface{}) (interface{}, error) {
 	var bodyReader io.Reader
 	if body != nil {
 		b, err := json.Marshal(body)
@@ -603,9 +526,6 @@ func doRequest(method, url string, body interface{}, token string) (interface{},
 	}
 	if body != nil {
 		req.Header.Set("Content-Type", "application/json")
-	}
-	if token != "" {
-		req.Header.Set("Authorization", "Bearer "+token)
 	}
 
 	resp, err := http.DefaultClient.Do(req)

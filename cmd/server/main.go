@@ -23,8 +23,6 @@ func main() {
 	}
 
 	svc := memory.NewService(cfg)
-	userStore := memory.NewUserStore(cfg)
-	userSvc := &memory.UserService{Store: userStore}
 
 	mux := http.NewServeMux()
 
@@ -35,7 +33,7 @@ func main() {
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusServiceUnavailable)
 			_ = json.NewEncoder(w).Encode(map[string]interface{}{
-				"status":  "error",
+				"status":   "error",
 				"dynamodb": err.Error(),
 			})
 			return
@@ -46,11 +44,11 @@ func main() {
 	})
 
 	// MCP routes
-	mcpSrv := mcpserver.NewServerWithService(svc, userSvc)
+	mcpSrv := mcpserver.NewServerWithService(svc)
 	mcpSrv.RegisterRoutes(mux)
 
 	// REST API routes
-	apiSrv := api.New(svc, userSvc)
+	apiSrv := api.New(svc)
 	apiSrv.RegisterRoutes(mux)
 
 	port := os.Getenv("PORT")

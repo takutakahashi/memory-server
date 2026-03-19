@@ -27,7 +27,6 @@ services:
       - AWS_SECRET_ACCESS_KEY=test
       - AWS_DEFAULT_REGION=ap-northeast-1
       - DYNAMODB_TABLE_NAME=memories
-      - USERS_TABLE_NAME=memory-users
       - DYNAMODB_ENDPOINT_URL=http://localstack:4566
     volumes:
       - ./scripts:/scripts
@@ -46,7 +45,6 @@ services:
       - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID:-}
       - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY:-}
       - DYNAMODB_TABLE_NAME=memories
-      - USERS_TABLE_NAME=memory-users
       - S3_VECTORS_BUCKET_NAME=${S3_VECTORS_BUCKET_NAME:-}
       - S3_VECTORS_INDEX_NAME=${S3_VECTORS_INDEX_NAME:-memories}
       - BEDROCK_REGION=${BEDROCK_REGION:-ap-northeast-1}

@@ -68,6 +68,14 @@ spec:
               value: {{ .Values.decay.lambda | quote }}
             - name: DECAY_MU
               value: {{ .Values.decay.mu | quote }}
+            {{- if .Values.auth.adminToken }}
+            - name: ADMIN_TOKEN
+              value: {{ .Values.auth.adminToken | quote }}
+            {{- end }}
+            {{- if .Values.auth.authEnabled }}
+            - name: AUTH_ENABLED
+              value: "true"
+            {{- end }}
             {{- if or .Values.aws.accessKeyId .Values.existingSecret }}
             - name: AWS_ACCESS_KEY_ID
               valueFrom:

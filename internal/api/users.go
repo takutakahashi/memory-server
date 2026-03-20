@@ -3,7 +3,6 @@ package api
 import (
 	"encoding/json"
 	"errors"
-	"fmt"
 	"net/http"
 	"time"
 
@@ -31,20 +30,27 @@ func (us *UserServer) RegisterUserRoutes(mux *http.ServeMux, authMiddleware func
 	mux.Handle("GET /api/v1/users/{user_id}", authMiddleware(http.HandlerFunc(us.handleGetUser)))
 }
 
-// handleCreateUser handles POST /api/v1/users
+// handleCreateUser handles POST /api/v1/users (upsert).
+//
+// Creates a new user or updates an existing one.
+// If the user already exists the token and description are overwritten.
 //
 // Request body:
 //
 //	{
 //	  "user_id": "alice",        // optional; auto-generated if empty
+//	  "token":   "my-token",     // optional; auto-generated as "usr_<uuid>" if empty
 //	  "description": "..."       // optional
 //	}
 //
-// Response (201 Created):
+// Response:
+//
+//	201 Created  – new user registered
+//	200 OK       – existing user updated
 //
 //	{
 //	  "user_id": "alice",
-//	  "token": "usr_<uuid>",
+//	  "token": "my-token",
 //	  "org_id": "my-org",
 //	  "description": "...",
 //	  "created_at": "..."
@@ -52,6 +58,7 @@ func (us *UserServer) RegisterUserRoutes(mux *http.ServeMux, authMiddleware func
 func (us *UserServer) handleCreateUser(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		UserID      string `json:"user_id"`
+		Token       string `json:"token"`
 		Description string `json:"description"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -67,34 +74,45 @@ func (us *UserServer) handleCreateUser(w http.ResponseWriter, r *http.Request) {
 		userID = uuid.NewString()
 	}
 
-	// Check if user already exists
+	// Use caller-supplied token, or auto-generate one
+	token := req.Token
+	if token == "" {
+		token = "usr_" + uuid.NewString()
+	}
+
+	// Determine if this is a create or update
 	existing, err := us.store.GetUser(r.Context(), userID)
 	if err != nil && !errors.Is(err, auth.ErrNotFound) {
 		writeError(w, http.StatusInternalServerError, "check user: "+err.Error())
 		return
 	}
-	if existing != nil {
-		writeError(w, http.StatusConflict, fmt.Sprintf("user %q already exists", userID))
-		return
-	}
 
-	// Generate a user API token: "usr_<uuid>"
-	token := "usr_" + uuid.NewString()
+	isNew := existing == nil
+
+	// Preserve original created_at when updating
+	createdAt := time.Now().UTC()
+	if !isNew {
+		createdAt = existing.CreatedAt
+	}
 
 	user := &auth.User{
 		UserID:      userID,
 		Token:       token,
 		Description: req.Description,
 		OrgID:       orgID,
-		CreatedAt:   time.Now().UTC(),
+		CreatedAt:   createdAt,
 	}
 
 	if err := us.store.PutUser(r.Context(), user); err != nil {
-		writeError(w, http.StatusInternalServerError, "create user: "+err.Error())
+		writeError(w, http.StatusInternalServerError, "upsert user: "+err.Error())
 		return
 	}
 
-	writeJSON(w, http.StatusCreated, user)
+	status := http.StatusCreated
+	if !isNew {
+		status = http.StatusOK
+	}
+	writeJSON(w, status, user)
 }
 
 // handleGetUser handles GET /api/v1/users/{user_id}

@@ -231,7 +231,9 @@ func TestGetUser_Found(t *testing.T) {
 		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
 	}
 	var user auth.User
-	json.NewDecoder(w.Body).Decode(&user)
+	if err := json.NewDecoder(w.Body).Decode(&user); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
 	if user.UserID != "alice" {
 		t.Errorf("user_id = %q, want alice", user.UserID)
 	}

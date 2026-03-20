@@ -19,8 +19,10 @@ func UserIDFromContext(ctx context.Context) string {
 	return v
 }
 
-// BearerAuth returns an HTTP middleware that validates Bearer tokens using the
-// provided UserStorer. On success it injects the user_id into the request context.
+// BearerAuth returns an HTTP middleware that validates Bearer tokens.
+// It first checks the ADMIN_TOKEN environment variable — if the token matches,
+// access is granted with user_id "admin". Otherwise it looks up the token in the
+// UserStorer. On success it injects the user_id into the request context.
 // On failure it responds with 401 Unauthorized.
 func BearerAuth(store UserStorer) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
@@ -28,6 +30,13 @@ func BearerAuth(store UserStorer) func(http.Handler) http.Handler {
 			token := extractBearerToken(r)
 			if token == "" {
 				http.Error(w, `{"error":"missing Authorization Bearer token"}`, http.StatusUnauthorized)
+				return
+			}
+
+			// ADMIN_TOKEN works as a super-user token across all APIs.
+			if adminToken := os.Getenv("ADMIN_TOKEN"); adminToken != "" && token == adminToken {
+				ctx := context.WithValue(r.Context(), userIDKey, "admin")
+				next.ServeHTTP(w, r.WithContext(ctx))
 				return
 			}
 

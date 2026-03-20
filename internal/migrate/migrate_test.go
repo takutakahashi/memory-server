@@ -143,7 +143,10 @@ func appliedVersions(ctx context.Context, t *testing.T, client *dynamodb.Client,
 			continue
 		}
 		var n int
-		fmt.Sscanf(nv.Value, "%d", &n)
+		if _, err := fmt.Sscanf(nv.Value, "%d", &n); err != nil {
+			t.Logf("unexpected version value %q: %v", nv.Value, err)
+			continue
+		}
 		applied[n] = struct{}{}
 	}
 	return applied

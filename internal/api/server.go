@@ -2,6 +2,7 @@ package api
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"strconv"
 
@@ -23,7 +24,7 @@ func New(svc *memory.Service) *Server {
 // Routes:
 //
 //	POST   /api/v1/memories          - Add memory
-//	GET    /api/v1/memories          - List memories (?user_id=&limit=&next_token=)
+//	GET    /api/v1/memories          - List memories (?limit=&next_token=)
 //	POST   /api/v1/memories/search   - Search memories
 //	GET    /api/v1/memories/{id}     - Get memory
 //	PUT    /api/v1/memories/{id}     - Update memory
@@ -52,10 +53,10 @@ func writeError(w http.ResponseWriter, status int, msg string) {
 // handleAdd handles POST /api/v1/memories
 func (s *Server) handleAdd(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		UserID  string        `json:"user_id"`
-		Content string        `json:"content"`
-		Tags    []string      `json:"tags"`
-		Scope   memory.Scope  `json:"scope"`
+		UserID  string       `json:"user_id"`
+		Content string       `json:"content"`
+		Tags    []string     `json:"tags"`
+		Scope   memory.Scope `json:"scope"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body: "+err.Error())
@@ -148,7 +149,11 @@ func (s *Server) handleGet(w http.ResponseWriter, r *http.Request) {
 
 	m, err := s.svc.Get(r.Context(), id)
 	if err != nil {
-		writeError(w, http.StatusNotFound, err.Error())
+		if errors.Is(err, memory.ErrNotFound) {
+			writeError(w, http.StatusNotFound, err.Error())
+		} else {
+			writeError(w, http.StatusInternalServerError, err.Error())
+		}
 		return
 	}
 

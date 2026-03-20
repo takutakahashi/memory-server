@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"text/tabwriter"
 )
 
 // tagList is a flag.Value that accumulates multiple --tag values.
@@ -28,6 +29,7 @@ func main() {
 	globalFlags := flag.NewFlagSet("memory-cli", flag.ContinueOnError)
 	serverURL := globalFlags.String("server", "", "Server base URL (overrides MEMORY_SERVER_URL)")
 	rawJSON := globalFlags.Bool("json", false, "Output raw JSON")
+	format := globalFlags.String("format", "", "Output format: table, json, pretty")
 
 	// Parse only up to the subcommand
 	if len(os.Args) < 2 {
@@ -53,6 +55,17 @@ func main() {
 			continue
 		}
 		if arg == "--json" || arg == "-json" {
+			globalArgs = append(globalArgs, arg)
+			continue
+		}
+		if arg == "--format" || arg == "-format" {
+			if i+1 < len(os.Args) {
+				globalArgs = append(globalArgs, arg, os.Args[i+1])
+				i++
+			}
+			continue
+		}
+		if strings.HasPrefix(arg, "--format=") || strings.HasPrefix(arg, "-format=") {
 			globalArgs = append(globalArgs, arg)
 			continue
 		}
@@ -109,24 +122,37 @@ func main() {
 		os.Exit(1)
 	}
 
-	if *rawJSON {
+	// Determine output format
+	outputFormat := *format
+	if outputFormat == "" {
+		if *rawJSON {
+			outputFormat = "json"
+		} else {
+			outputFormat = "table"
+		}
+	}
+
+	switch outputFormat {
+	case "json":
 		b, _ := json.Marshal(result)
 		fmt.Println(string(b))
-	} else {
+	case "pretty":
 		b, _ := json.MarshalIndent(result, "", "  ")
 		fmt.Println(string(b))
+	default: // table
+		printTable(subcommand, result)
 	}
 }
 
 func printUsage() {
-	fmt.Fprintf(os.Stderr, `Usage: memory-cli [--server URL] [--json] <command> [options]
+	fmt.Fprintf(os.Stderr, `Usage: memory-cli [--server URL] [--format table|json|pretty] [--json] <command> [options]
 
 Commands:
-  add     --user-id ID --content TEXT [--tag TAG ...] [--scope SCOPE]
-  search  --user-id ID --query TEXT [--tag TAG ...] [--limit N]
-  list    --user-id ID [--limit N] [--next-token TOKEN]
+  add     --content TEXT [--tag TAG ...] [--scope SCOPE]
+  search  --query TEXT [--tag TAG ...] [--limit N]
+  list    [--limit N] [--next-token TOKEN]
   get     <memory-id>
-  update  <memory-id> [--content TEXT] [--tag TAG ...] [--scope SCOPE]
+  update  <memory-id> [--content TEXT] [--tag TAG ...] [--add-tag TAG ...] [--remove-tag TAG ...] [--scope SCOPE]
   delete  <memory-id>
 
 Scope values:
@@ -135,16 +161,177 @@ Scope values:
 
 Environment:
   MEMORY_SERVER_URL  Server base URL (default: http://localhost:8080)
+  MEMORY_USER_ID     Default user ID
 
 Options:
-  --server URL    Override server URL
-  --json          Output raw JSON (default: pretty-printed)
+  --server URL              Override server URL
+  --format table|json|pretty  Output format (default: table)
+  --json                    Output raw JSON (backward compatible, same as --format json)
 `)
+}
+
+// printTable prints results in table format.
+func printTable(subcommand string, result interface{}) {
+	b, _ := json.Marshal(result)
+	var raw interface{}
+	_ = json.Unmarshal(b, &raw)
+
+	switch subcommand {
+	case "list":
+		printMemoryList(raw)
+	case "search":
+		printSearchResults(raw)
+	case "get":
+		printSingleMemory(raw)
+	case "add", "delete", "update":
+		// For these, print key-value
+		if m, ok := raw.(map[string]interface{}); ok {
+			printKeyValue(m)
+		} else {
+			b2, _ := json.MarshalIndent(raw, "", "  ")
+			fmt.Println(string(b2))
+		}
+	default:
+		b2, _ := json.MarshalIndent(raw, "", "  ")
+		fmt.Println(string(b2))
+	}
+}
+
+func printMemoryList(raw interface{}) {
+	m, ok := raw.(map[string]interface{})
+	if !ok {
+		b, _ := json.MarshalIndent(raw, "", "  ")
+		fmt.Println(string(b))
+		return
+	}
+	memories, _ := m["memories"].([]interface{})
+	printMemoriesTable(memories)
+}
+
+func printSearchResults(raw interface{}) {
+	results, ok := raw.([]interface{})
+	if !ok {
+		b, _ := json.MarshalIndent(raw, "", "  ")
+		fmt.Println(string(b))
+		return
+	}
+
+	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
+	_, _ = fmt.Fprintln(w, "ID\tCONTENT\tTAGS\tSCOPE\tSCORE\tCREATED_AT")
+	for _, item := range results {
+		m, ok := item.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		mem, _ := m["memory"].(map[string]interface{})
+		if mem == nil {
+			continue
+		}
+		id := shortStr(strVal(mem["memory_id"]), 8)
+		content := shortStr(strVal(mem["content"]), 50)
+		tags := tagsStr(mem["tags"])
+		scope := strVal(mem["scope"])
+		score := fmt.Sprintf("%.4f", floatVal(m["final_score"]))
+		createdAt := shortStr(strVal(mem["created_at"]), 19)
+		_, _ = fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\n", id, content, tags, scope, score, createdAt)
+	}
+	_ = w.Flush()
+}
+
+func printMemoriesTable(memories []interface{}) {
+	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
+	_, _ = fmt.Fprintln(w, "ID\tCONTENT\tTAGS\tSCOPE\tCREATED_AT")
+	for _, item := range memories {
+		m, ok := item.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		id := shortStr(strVal(m["memory_id"]), 8)
+		content := shortStr(strVal(m["content"]), 50)
+		tags := tagsStr(m["tags"])
+		scope := strVal(m["scope"])
+		createdAt := shortStr(strVal(m["created_at"]), 19)
+		_, _ = fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n", id, content, tags, scope, createdAt)
+	}
+	_ = w.Flush()
+}
+
+func printSingleMemory(raw interface{}) {
+	m, ok := raw.(map[string]interface{})
+	if !ok {
+		b, _ := json.MarshalIndent(raw, "", "  ")
+		fmt.Println(string(b))
+		return
+	}
+	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
+	keys := []string{"memory_id", "user_id", "content", "tags", "scope", "created_at", "updated_at", "access_count"}
+	for _, k := range keys {
+		v, ok := m[k]
+		if !ok {
+			continue
+		}
+		var val string
+		switch tv := v.(type) {
+		case []interface{}:
+			strs := make([]string, 0, len(tv))
+			for _, s := range tv {
+				strs = append(strs, fmt.Sprintf("%v", s))
+			}
+			val = strings.Join(strs, ", ")
+		default:
+			val = fmt.Sprintf("%v", v)
+		}
+		_, _ = fmt.Fprintf(w, "%s\t%s\n", k, val)
+	}
+	_ = w.Flush()
+}
+
+func printKeyValue(m map[string]interface{}) {
+	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
+	for k, v := range m {
+		_, _ = fmt.Fprintf(w, "%s\t%v\n", k, v)
+	}
+	_ = w.Flush()
+}
+
+// helpers
+func shortStr(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	return s[:n] + "..."
+}
+
+func strVal(v interface{}) string {
+	if v == nil {
+		return ""
+	}
+	return fmt.Sprintf("%v", v)
+}
+
+func floatVal(v interface{}) float64 {
+	if v == nil {
+		return 0
+	}
+	f, _ := v.(float64)
+	return f
+}
+
+func tagsStr(v interface{}) string {
+	arr, ok := v.([]interface{})
+	if !ok {
+		return ""
+	}
+	strs := make([]string, 0, len(arr))
+	for _, s := range arr {
+		strs = append(strs, fmt.Sprintf("%v", s))
+	}
+	return strings.Join(strs, ",")
 }
 
 func runAdd(baseURL string, args []string) (interface{}, error) {
 	fs := flag.NewFlagSet("add", flag.ContinueOnError)
-	userID := fs.String("user-id", "", "User ID")
+	userID := fs.String("user-id", os.Getenv("MEMORY_USER_ID"), "User ID")
 	content := fs.String("content", "", "Content of the memory")
 	scope := fs.String("scope", "", "Visibility scope: 'private' (default) or 'public'")
 	var tags tagList
@@ -158,9 +345,11 @@ func runAdd(baseURL string, args []string) (interface{}, error) {
 	}
 
 	body := map[string]interface{}{
-		"user_id": *userID,
 		"content": *content,
 		"tags":    []string(tags),
+	}
+	if *userID != "" {
+		body["user_id"] = *userID
 	}
 	if *scope != "" {
 		body["scope"] = *scope
@@ -171,7 +360,7 @@ func runAdd(baseURL string, args []string) (interface{}, error) {
 
 func runSearch(baseURL string, args []string) (interface{}, error) {
 	fs := flag.NewFlagSet("search", flag.ContinueOnError)
-	userID := fs.String("user-id", "", "User ID")
+	userID := fs.String("user-id", os.Getenv("MEMORY_USER_ID"), "User ID")
 	query := fs.String("query", "", "Search query")
 	limit := fs.Int("limit", 0, "Number of results")
 	var tags tagList
@@ -185,10 +374,12 @@ func runSearch(baseURL string, args []string) (interface{}, error) {
 	}
 
 	body := map[string]interface{}{
-		"user_id": *userID,
-		"query":   *query,
-		"tags":    []string(tags),
-		"limit":   *limit,
+		"query": *query,
+		"tags":  []string(tags),
+		"limit": *limit,
+	}
+	if *userID != "" {
+		body["user_id"] = *userID
 	}
 
 	return doRequest(http.MethodPost, baseURL+"/api/v1/memories/search", body)
@@ -196,7 +387,7 @@ func runSearch(baseURL string, args []string) (interface{}, error) {
 
 func runList(baseURL string, args []string) (interface{}, error) {
 	fs := flag.NewFlagSet("list", flag.ContinueOnError)
-	userID := fs.String("user-id", "", "User ID")
+	userID := fs.String("user-id", os.Getenv("MEMORY_USER_ID"), "User ID")
 	limit := fs.Int("limit", 0, "Number of results per page")
 	nextToken := fs.String("next-token", "", "Pagination token")
 	if err := fs.Parse(args); err != nil {
@@ -231,7 +422,7 @@ func runGet(baseURL string, args []string) (interface{}, error) {
 
 func runUpdate(baseURL string, args []string) (interface{}, error) {
 	if len(args) == 0 || strings.HasPrefix(args[0], "-") {
-		return nil, fmt.Errorf("memory-id is required\nUsage: memory-cli update <memory-id> [--content TEXT] [--tag TAG ...] [--scope SCOPE]")
+		return nil, fmt.Errorf("memory-id is required\nUsage: memory-cli update <memory-id> [--content TEXT] [--tag TAG ...] [--add-tag TAG ...] [--remove-tag TAG ...] [--scope SCOPE]")
 	}
 	memoryID := args[0]
 	rest := args[1:]
@@ -241,13 +432,67 @@ func runUpdate(baseURL string, args []string) (interface{}, error) {
 	scope := fs.String("scope", "", "New visibility scope: 'private' or 'public'")
 	var tags tagList
 	fs.Var(&tags, "tag", "New tag (can be specified multiple times)")
+	var addTags tagList
+	fs.Var(&addTags, "add-tag", "Tag to add (can be specified multiple times)")
+	var removeTags tagList
+	fs.Var(&removeTags, "remove-tag", "Tag to remove (can be specified multiple times)")
 	if err := fs.Parse(rest); err != nil {
 		return nil, err
 	}
 
+	// If add-tag or remove-tag specified, fetch current memory first
+	finalTags := []string(tags)
+	if len(addTags) > 0 || len(removeTags) > 0 {
+		current, err := doRequest(http.MethodGet, baseURL+"/api/v1/memories/"+memoryID, nil)
+		if err != nil {
+			return nil, fmt.Errorf("fetch current memory: %w", err)
+		}
+		b, _ := json.Marshal(current)
+		var mem map[string]interface{}
+		_ = json.Unmarshal(b, &mem)
+
+		// Get existing tags
+		existingTags := []string{}
+		if rawTags, ok := mem["tags"].([]interface{}); ok {
+			for _, t := range rawTags {
+				if s, ok := t.(string); ok {
+					existingTags = append(existingTags, s)
+				}
+			}
+		}
+
+		// Merge with --tag if specified, otherwise start from existing
+		if len(finalTags) == 0 {
+			finalTags = existingTags
+		}
+
+		// Add new tags
+		tagSet := make(map[string]bool)
+		for _, t := range finalTags {
+			tagSet[t] = true
+		}
+		for _, t := range addTags {
+			tagSet[t] = true
+		}
+
+		// Remove tags
+		removeSet := make(map[string]bool)
+		for _, t := range removeTags {
+			removeSet[t] = true
+		}
+
+		merged := []string{}
+		for t := range tagSet {
+			if !removeSet[t] {
+				merged = append(merged, t)
+			}
+		}
+		finalTags = merged
+	}
+
 	body := map[string]interface{}{
 		"content": *content,
-		"tags":    []string(tags),
+		"tags":    finalTags,
 	}
 	if *scope != "" {
 		body["scope"] = *scope

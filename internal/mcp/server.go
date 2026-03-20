@@ -56,21 +56,21 @@ func NewServer(ctx context.Context) (*Server, error) {
 // --- Tool input types ---
 
 type AddMemoryInput struct {
-	UserID  string        `json:"user_id" jsonschema:"User ID (default: 'default')"`
-	Content string        `json:"content" jsonschema:"Content of the memory"`
-	Tags    []string      `json:"tags" jsonschema:"Tags for the memory"`
-	Scope   memory.Scope  `json:"scope" jsonschema:"Visibility scope: 'private' (default, owner only) or 'public' (all users)"`
+	UserID  string       `json:"user_id" jsonschema:"User ID"`
+	Content string       `json:"content" jsonschema:"Content of the memory"`
+	Tags    []string     `json:"tags" jsonschema:"Tags for the memory"`
+	Scope   memory.Scope `json:"scope" jsonschema:"Visibility scope: 'private' (default, owner only) or 'public' (all users)"`
 }
 
 type SearchMemoriesInput struct {
-	UserID string   `json:"user_id" jsonschema:"User ID (default: 'default')"`
+	UserID string   `json:"user_id" jsonschema:"User ID"`
 	Query  string   `json:"query" jsonschema:"Natural language search query"`
 	Tags   []string `json:"tags" jsonschema:"Tags for OR-filtered search (max 5)"`
 	Limit  int      `json:"limit" jsonschema:"Number of results to return (default: 10)"`
 }
 
 type ListMemoriesInput struct {
-	UserID    string `json:"user_id" jsonschema:"User ID (default: 'default')"`
+	UserID    string `json:"user_id" jsonschema:"User ID"`
 	Limit     int    `json:"limit" jsonschema:"Number of results per page (default: 20)"`
 	NextToken string `json:"next_token" jsonschema:"Pagination token"`
 }

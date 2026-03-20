@@ -109,7 +109,7 @@ func (s *Service) Search(ctx context.Context, input SearchInput) ([]*SearchResul
 	}
 	tags := input.Tags
 	if len(tags) > 5 {
-		tags = tags[:5]
+		return nil, fmt.Errorf("too many tags: max 5, got %d", len(tags))
 	}
 	limit := input.Limit
 	if limit == 0 {
@@ -146,7 +146,7 @@ func (s *Service) Search(ctx context.Context, input SearchInput) ([]*SearchResul
 			results []*VectorResult
 			err     error
 		}
-		resultCh := make(chan tagResult, len(tags))
+		resultCh := make(chan tagResult, len(tags)+1)
 		var wg sync.WaitGroup
 		for _, tag := range tags {
 			wg.Add(1)
@@ -156,6 +156,12 @@ func (s *Service) Search(ctx context.Context, input SearchInput) ([]*SearchResul
 				resultCh <- tagResult{results: results, err: qErr}
 			}(tag)
 		}
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			results, qErr := s.Vectors.QueryVectorsPublic(ctx, embedding, 50)
+			resultCh <- tagResult{results: results, err: qErr}
+		}()
 		wg.Wait()
 		close(resultCh)
 

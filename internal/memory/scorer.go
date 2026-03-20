@@ -52,7 +52,7 @@ func (s *Scorer) Score(similarityScore float64, m *Memory) float64 {
 
 	return similarityScore *
 		math.Exp(-s.lambda*daysSinceCreated) *
-		math.Log1p(accessCount) *
+		math.Log1p(accessCount+1) *
 		math.Exp(-s.mu*daysSinceAccessed)
 }
 

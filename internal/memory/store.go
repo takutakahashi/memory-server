@@ -66,7 +66,7 @@ func (s *Store) Get(ctx context.Context, memoryID string) (*Memory, error) {
 		return nil, fmt.Errorf("get item: %w", err)
 	}
 	if result.Item == nil {
-		return nil, fmt.Errorf("memory not found: %s", memoryID)
+		return nil, fmt.Errorf("%w: memory %s", ErrNotFound, memoryID)
 	}
 
 	var m Memory
@@ -228,6 +228,14 @@ func (s *Store) Delete(ctx context.Context, memoryID string) error {
 		return fmt.Errorf("delete item: %w", err)
 	}
 	return nil
+}
+
+// Ping checks connectivity to DynamoDB by describing the table.
+func (s *Store) Ping(ctx context.Context) error {
+	_, err := s.client.DescribeTable(ctx, &dynamodb.DescribeTableInput{
+		TableName: aws.String(s.tableName),
+	})
+	return err
 }
 
 func mustMarshalStringList(tags []string) types.AttributeValue {

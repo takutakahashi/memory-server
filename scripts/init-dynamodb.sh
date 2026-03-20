@@ -7,10 +7,13 @@ TABLE_NAME="${DYNAMODB_TABLE_NAME:-memories}"
 ENDPOINT_URL="${DYNAMODB_ENDPOINT_URL:-}"
 REGION="${AWS_REGION:-ap-northeast-1}"
 
-EXTRA_ARGS=""
+ENDPOINT_ARG=""
 if [ -n "$ENDPOINT_URL" ]; then
-  EXTRA_ARGS="--endpoint-url $ENDPOINT_URL"
+  ENDPOINT_ARG="--endpoint-url $ENDPOINT_URL"
 fi
+
+# Keep backward-compatible alias
+EXTRA_ARGS="$ENDPOINT_ARG"
 
 echo "Creating DynamoDB table: $TABLE_NAME in region $REGION"
 

@@ -39,8 +39,8 @@ var allMigrations = []Migration{
 	},
 	{
 		Version:     2,
-		Description: "create org_tokens table",
-		Up:          migration002CreateOrgTokens,
+		Description: "no-op: org_tokens table removed (org concept replaced by users)",
+		Up:          migration002Noop,
 	},
 	{
 		Version:     3,
@@ -61,12 +61,10 @@ func migration001CreateMemories(ctx context.Context, client *dynamodb.Client) er
 	return ensureTable(ctx, client, memoriesTableDef(tableName))
 }
 
-func migration002CreateOrgTokens(ctx context.Context, client *dynamodb.Client) error {
-	tableName := os.Getenv("ORG_TOKENS_TABLE_NAME")
-	if tableName == "" {
-		tableName = "org_tokens"
-	}
-	return ensureTable(ctx, client, orgTokensTableDef(tableName))
+// migration002Noop is a no-op placeholder that preserves the migration version
+// sequence for existing deployments that already ran migration002.
+func migration002Noop(_ context.Context, _ *dynamodb.Client) error {
+	return nil
 }
 
 func migration003CreateUsers(ctx context.Context, client *dynamodb.Client) error {

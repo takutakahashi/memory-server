@@ -21,10 +21,10 @@ func NewUserServer(store auth.UserStorer) *UserServer {
 }
 
 // RegisterUserRoutes registers user-related routes on the mux.
-// All routes require org token authentication via the provided middleware.
+// All routes require admin token authentication via the provided middleware.
 //
-//	POST /api/v1/users  - Register a new user (org token required)
-//	GET  /api/v1/users/{user_id} - Get user info (org token required)
+//	POST /api/v1/users           - Register a new user (admin token required)
+//	GET  /api/v1/users/{user_id} - Get user info (admin token required)
 func (us *UserServer) RegisterUserRoutes(mux *http.ServeMux, authMiddleware func(http.Handler) http.Handler) {
 	mux.Handle("POST /api/v1/users", authMiddleware(http.HandlerFunc(us.handleCreateUser)))
 	mux.Handle("GET /api/v1/users/{user_id}", authMiddleware(http.HandlerFunc(us.handleGetUser)))
@@ -38,22 +38,20 @@ func (us *UserServer) RegisterUserRoutes(mux *http.ServeMux, authMiddleware func
 // Request body:
 //
 //	{
-//	  "user_id": "alice",        // optional; auto-generated if empty
-//	  "token":   "my-token",     // optional; auto-generated as "usr_<uuid>" if empty
+//	  "user_id":     "alice",    // optional; auto-generated if empty
+//	  "token":       "my-token", // optional; auto-generated as "usr_<uuid>" if empty
 //	  "description": "..."       // optional
 //	}
 //
 // Response:
 //
-//	201 Created  – new user registered
-//	200 OK       – existing user updated
+//	200 OK
 //
 //	{
-//	  "user_id": "alice",
-//	  "token": "my-token",
-//	  "org_id": "my-org",
+//	  "user_id":     "alice",
+//	  "token":       "my-token",
 //	  "description": "...",
-//	  "created_at": "..."
+//	  "created_at":  "..."
 //	}
 func (us *UserServer) handleCreateUser(w http.ResponseWriter, r *http.Request) {
 	var req struct {
@@ -65,8 +63,6 @@ func (us *UserServer) handleCreateUser(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid request body: "+err.Error())
 		return
 	}
-
-	orgID := auth.OrgIDFromContext(r.Context())
 
 	// Auto-generate user_id if not provided
 	userID := req.UserID
@@ -87,11 +83,9 @@ func (us *UserServer) handleCreateUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	isNew := existing == nil
-
 	// Preserve original created_at when updating
 	createdAt := time.Now().UTC()
-	if !isNew {
+	if existing != nil {
 		createdAt = existing.CreatedAt
 	}
 
@@ -99,7 +93,6 @@ func (us *UserServer) handleCreateUser(w http.ResponseWriter, r *http.Request) {
 		UserID:      userID,
 		Token:       token,
 		Description: req.Description,
-		OrgID:       orgID,
 		CreatedAt:   createdAt,
 	}
 

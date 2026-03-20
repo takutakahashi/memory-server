@@ -56,14 +56,15 @@ func main() {
 	mcpSrv := mcpserver.NewServerWithService(svc)
 	mcpSrv.RegisterRoutes(mux)
 
-	// Auth store — always initialised so user/org-token routes work.
+	// Auth store — always initialised so user routes work.
 	// Set AUTH_ENABLED=true to also require Bearer tokens on memory endpoints.
+	// Set ADMIN_TOKEN to enable the user management API (POST/GET /api/v1/users).
 	authStore := auth.NewStore(cfg)
 	authEnabled := os.Getenv("AUTH_ENABLED") == "true"
 
-	// User management routes (always require org token)
+	// User management routes (require ADMIN_TOKEN via AdminTokenAuth)
 	userSrv := api.NewUserServer(authStore)
-	userSrv.RegisterUserRoutes(mux, auth.OrgTokenAuth(authStore))
+	userSrv.RegisterUserRoutes(mux, auth.AdminTokenAuth())
 
 	// REST API memory routes — optionally protected by user Bearer tokens
 	apiSrv := api.New(svc)

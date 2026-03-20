@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"os"
 	"strings"
 )
 
@@ -18,8 +19,10 @@ func UserIDFromContext(ctx context.Context) string {
 	return v
 }
 
-// BearerAuth returns an HTTP middleware that validates Bearer tokens using the
-// provided UserStorer. On success it injects the user_id into the request context.
+// BearerAuth returns an HTTP middleware that validates Bearer tokens.
+// It first checks the ADMIN_TOKEN environment variable — if the token matches,
+// access is granted with user_id "admin". Otherwise it looks up the token in the
+// UserStorer. On success it injects the user_id into the request context.
 // On failure it responds with 401 Unauthorized.
 func BearerAuth(store UserStorer) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
@@ -27,6 +30,13 @@ func BearerAuth(store UserStorer) func(http.Handler) http.Handler {
 			token := extractBearerToken(r)
 			if token == "" {
 				http.Error(w, `{"error":"missing Authorization Bearer token"}`, http.StatusUnauthorized)
+				return
+			}
+
+			// ADMIN_TOKEN works as a super-user token across all APIs.
+			if adminToken := os.Getenv("ADMIN_TOKEN"); adminToken != "" && token == adminToken {
+				ctx := context.WithValue(r.Context(), userIDKey, "admin")
+				next.ServeHTTP(w, r.WithContext(ctx))
 				return
 			}
 
@@ -46,41 +56,31 @@ func BearerAuth(store UserStorer) func(http.Handler) http.Handler {
 	}
 }
 
-// OrgTokenAuth returns an HTTP middleware that validates org-level Bearer tokens.
-// On success it injects the org_id into the request context via orgIDKey.
-func OrgTokenAuth(store UserStorer) func(http.Handler) http.Handler {
+// AdminTokenAuth returns an HTTP middleware that validates a static admin token
+// set via the ADMIN_TOKEN environment variable. If ADMIN_TOKEN is not set,
+// all requests are rejected with 503.
+func AdminTokenAuth() func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			adminToken := os.Getenv("ADMIN_TOKEN")
+			if adminToken == "" {
+				http.Error(w, `{"error":"admin API is disabled (ADMIN_TOKEN not set)"}`, http.StatusServiceUnavailable)
+				return
+			}
+
 			token := extractBearerToken(r)
 			if token == "" {
 				http.Error(w, `{"error":"missing Authorization Bearer token"}`, http.StatusUnauthorized)
 				return
 			}
-
-			orgToken, err := store.GetOrgToken(r.Context(), token)
-			if err != nil {
-				if errors.Is(err, ErrNotFound) {
-					http.Error(w, `{"error":"invalid org token"}`, http.StatusUnauthorized)
-				} else {
-					http.Error(w, `{"error":"auth error"}`, http.StatusInternalServerError)
-				}
+			if token != adminToken {
+				http.Error(w, `{"error":"invalid admin token"}`, http.StatusUnauthorized)
 				return
 			}
 
-			ctx := context.WithValue(r.Context(), orgIDKey, orgToken.OrgID)
-			next.ServeHTTP(w, r.WithContext(ctx))
+			next.ServeHTTP(w, r)
 		})
 	}
-}
-
-type orgContextKey string
-
-const orgIDKey orgContextKey = "org_id"
-
-// OrgIDFromContext extracts the authenticated org_id from the request context.
-func OrgIDFromContext(ctx context.Context) string {
-	v, _ := ctx.Value(orgIDKey).(string)
-	return v
 }
 
 func extractBearerToken(r *http.Request) string {

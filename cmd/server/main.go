@@ -10,6 +10,7 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/takutakahashi/memory-server/internal/api"
+	"github.com/takutakahashi/memory-server/internal/auth"
 	"github.com/takutakahashi/memory-server/internal/memory"
 	mcpserver "github.com/takutakahashi/memory-server/internal/mcp"
 )
@@ -43,13 +44,28 @@ func main() {
 		_ = json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
 	})
 
-	// MCP routes
+	// MCP routes (no auth — MCP clients manage their own auth)
 	mcpSrv := mcpserver.NewServerWithService(svc)
 	mcpSrv.RegisterRoutes(mux)
 
-	// REST API routes
+	// Auth store — always initialised so user/org-token routes work.
+	// Set AUTH_ENABLED=true to also require Bearer tokens on memory endpoints.
+	authStore := auth.NewStore(cfg)
+	authEnabled := os.Getenv("AUTH_ENABLED") == "true"
+
+	// User management routes (always require org token)
+	userSrv := api.NewUserServer(authStore)
+	userSrv.RegisterUserRoutes(mux, auth.OrgTokenAuth(authStore))
+
+	// REST API memory routes — optionally protected by user Bearer tokens
 	apiSrv := api.New(svc)
-	apiSrv.RegisterRoutes(mux)
+	if authEnabled {
+		log.Println("Auth enabled: memory API requires Bearer user token")
+		apiSrv.RegisterRoutes(mux, auth.BearerAuth(authStore))
+	} else {
+		log.Println("Auth disabled: memory API is open (set AUTH_ENABLED=true to enable)")
+		apiSrv.RegisterRoutes(mux)
+	}
 
 	port := os.Getenv("PORT")
 	if port == "" {

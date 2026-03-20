@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"strconv"
 
+	"github.com/takutakahashi/memory-server/internal/auth"
 	"github.com/takutakahashi/memory-server/internal/memory"
 )
 
@@ -20,6 +21,8 @@ func New(svc *memory.Service) *Server {
 }
 
 // RegisterRoutes registers the REST API routes on the given mux.
+// If authMiddleware is non-nil it is applied to all memory routes and
+// user_id is derived from the authenticated token (request-body user_id is ignored).
 //
 // Routes:
 //
@@ -29,13 +32,29 @@ func New(svc *memory.Service) *Server {
 //	GET    /api/v1/memories/{id}     - Get memory
 //	PUT    /api/v1/memories/{id}     - Update memory
 //	DELETE /api/v1/memories/{id}     - Delete memory
-func (s *Server) RegisterRoutes(mux *http.ServeMux) {
-	mux.HandleFunc("POST /api/v1/memories", s.handleAdd)
-	mux.HandleFunc("GET /api/v1/memories", s.handleList)
-	mux.HandleFunc("POST /api/v1/memories/search", s.handleSearch)
-	mux.HandleFunc("GET /api/v1/memories/{id}", s.handleGet)
-	mux.HandleFunc("PUT /api/v1/memories/{id}", s.handleUpdate)
-	mux.HandleFunc("DELETE /api/v1/memories/{id}", s.handleDelete)
+func (s *Server) RegisterRoutes(mux *http.ServeMux, authMiddleware ...func(http.Handler) http.Handler) {
+	wrap := func(h http.Handler) http.Handler {
+		if len(authMiddleware) > 0 && authMiddleware[0] != nil {
+			return authMiddleware[0](h)
+		}
+		return h
+	}
+
+	mux.Handle("POST /api/v1/memories", wrap(http.HandlerFunc(s.handleAdd)))
+	mux.Handle("GET /api/v1/memories", wrap(http.HandlerFunc(s.handleList)))
+	mux.Handle("POST /api/v1/memories/search", wrap(http.HandlerFunc(s.handleSearch)))
+	mux.Handle("GET /api/v1/memories/{id}", wrap(http.HandlerFunc(s.handleGet)))
+	mux.Handle("PUT /api/v1/memories/{id}", wrap(http.HandlerFunc(s.handleUpdate)))
+	mux.Handle("DELETE /api/v1/memories/{id}", wrap(http.HandlerFunc(s.handleDelete)))
+}
+
+// resolveUserID returns the user_id from the auth context (when auth is enabled)
+// or falls back to the supplied fallback value (unauthenticated mode).
+func resolveUserID(r *http.Request, fallback string) string {
+	if uid := auth.UserIDFromContext(r.Context()); uid != "" {
+		return uid
+	}
+	return fallback
 }
 
 // writeJSON writes v as a JSON response with the given status code.
@@ -64,7 +83,7 @@ func (s *Server) handleAdd(w http.ResponseWriter, r *http.Request) {
 	}
 
 	result, err := s.svc.Add(r.Context(), memory.AddInput{
-		UserID:  req.UserID,
+		UserID:  resolveUserID(r, req.UserID),
 		Content: req.Content,
 		Tags:    req.Tags,
 		Scope:   req.Scope,
@@ -80,7 +99,7 @@ func (s *Server) handleAdd(w http.ResponseWriter, r *http.Request) {
 // handleList handles GET /api/v1/memories
 func (s *Server) handleList(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
-	userID := q.Get("user_id")
+	userID := resolveUserID(r, q.Get("user_id"))
 	limitStr := q.Get("limit")
 	nextTokenStr := q.Get("next_token")
 
@@ -126,7 +145,7 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 	}
 
 	results, err := s.svc.Search(r.Context(), memory.SearchInput{
-		UserID: req.UserID,
+		UserID: resolveUserID(r, req.UserID),
 		Query:  req.Query,
 		Tags:   req.Tags,
 		Limit:  req.Limit,

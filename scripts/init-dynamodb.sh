@@ -52,3 +52,51 @@ aws dynamodb create-table \
   --provisioned-throughput ReadCapacityUnits=5,WriteCapacityUnits=5
 
 echo "Table $TABLE_NAME created successfully."
+
+# -------------------------------------------------------------------------
+# org_tokens table
+# -------------------------------------------------------------------------
+ORG_TOKENS_TABLE="${ORG_TOKENS_TABLE_NAME:-org_tokens}"
+echo "Creating DynamoDB table: $ORG_TOKENS_TABLE in region $REGION"
+
+aws dynamodb create-table \
+  --region "$REGION" \
+  $EXTRA_ARGS \
+  --table-name "$ORG_TOKENS_TABLE" \
+  --attribute-definitions \
+    AttributeName=token,AttributeType=S \
+  --key-schema \
+    AttributeName=token,KeyType=HASH \
+  --provisioned-throughput ReadCapacityUnits=5,WriteCapacityUnits=5
+
+echo "Table $ORG_TOKENS_TABLE created successfully."
+
+# -------------------------------------------------------------------------
+# users table
+# -------------------------------------------------------------------------
+USERS_TABLE="${USERS_TABLE_NAME:-users}"
+echo "Creating DynamoDB table: $USERS_TABLE in region $REGION"
+
+aws dynamodb create-table \
+  --region "$REGION" \
+  $EXTRA_ARGS \
+  --table-name "$USERS_TABLE" \
+  --attribute-definitions \
+    AttributeName=user_id,AttributeType=S \
+    AttributeName=token,AttributeType=S \
+  --key-schema \
+    AttributeName=user_id,KeyType=HASH \
+  --global-secondary-indexes \
+    '[
+      {
+        "IndexName": "token-index",
+        "KeySchema": [
+          {"AttributeName": "token", "KeyType": "HASH"}
+        ],
+        "Projection": {"ProjectionType": "ALL"},
+        "ProvisionedThroughput": {"ReadCapacityUnits": 5, "WriteCapacityUnits": 5}
+      }
+    ]' \
+  --provisioned-throughput ReadCapacityUnits=5,WriteCapacityUnits=5
+
+echo "Table $USERS_TABLE created successfully."

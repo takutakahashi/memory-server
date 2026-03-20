@@ -157,7 +157,9 @@ func TestCreateUser_NewUser_CallerSpecifiedToken(t *testing.T) {
 	}
 
 	var user auth.User
-	json.NewDecoder(w.Body).Decode(&user)
+	if err := json.NewDecoder(w.Body).Decode(&user); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
 	if user.Token != "my-custom-token" {
 		t.Errorf("token = %q, want my-custom-token", user.Token)
 	}
@@ -183,7 +185,9 @@ func TestCreateUser_UpdateExisting_Returns200(t *testing.T) {
 	}
 
 	var user auth.User
-	json.NewDecoder(w.Body).Decode(&user)
+	if err := json.NewDecoder(w.Body).Decode(&user); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
 	if user.Token != "new-token" {
 		t.Errorf("token = %q, want new-token", user.Token)
 	}
@@ -208,7 +212,9 @@ func TestCreateUser_AutoGenerateUserID(t *testing.T) {
 	}
 
 	var user auth.User
-	json.NewDecoder(w.Body).Decode(&user)
+	if err := json.NewDecoder(w.Body).Decode(&user); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
 	if user.UserID == "" {
 		t.Error("user_id should be auto-generated")
 	}
@@ -225,7 +231,9 @@ func TestGetUser_Found(t *testing.T) {
 		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
 	}
 	var user auth.User
-	json.NewDecoder(w.Body).Decode(&user)
+	if err := json.NewDecoder(w.Body).Decode(&user); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
 	if user.UserID != "alice" {
 		t.Errorf("user_id = %q, want alice", user.UserID)
 	}

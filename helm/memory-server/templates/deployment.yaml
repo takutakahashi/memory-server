@@ -68,11 +68,11 @@ spec:
               value: {{ .Values.decay.lambda | quote }}
             - name: DECAY_MU
               value: {{ .Values.decay.mu | quote }}
-            {{- if .Values.auth.adminToken }}
+            {{- if and .Values.auth ((.Values.auth).adminToken) }}
             - name: ADMIN_TOKEN
               value: {{ .Values.auth.adminToken | quote }}
             {{- end }}
-            {{- if .Values.auth.authEnabled }}
+            {{- if and .Values.auth ((.Values.auth).authEnabled) }}
             - name: AUTH_ENABLED
               value: "true"
             {{- end }}

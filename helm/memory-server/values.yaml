@@ -81,3 +81,11 @@ decay:
 
 # Existing secret for AWS credentials (alternative to aws.accessKeyId/secretAccessKey)
 existingSecret: ""
+
+# Auth configuration
+auth:
+  # Admin token — grants super-user access to both the user management API
+  # and (when authEnabled=true) the memory API.
+  adminToken: ""
+  # Set to true to require Bearer tokens on all memory endpoints.
+  authEnabled: false

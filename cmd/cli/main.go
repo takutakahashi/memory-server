@@ -217,7 +217,7 @@ func printSearchResults(raw interface{}) {
 	}
 
 	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(w, "ID\tCONTENT\tTAGS\tSCOPE\tSCORE\tCREATED_AT")
+	_, _ = fmt.Fprintln(w, "ID\tCONTENT\tTAGS\tSCOPE\tSCORE\tCREATED_AT")
 	for _, item := range results {
 		m, ok := item.(map[string]interface{})
 		if !ok {
@@ -233,14 +233,14 @@ func printSearchResults(raw interface{}) {
 		scope := strVal(mem["scope"])
 		score := fmt.Sprintf("%.4f", floatVal(m["final_score"]))
 		createdAt := shortStr(strVal(mem["created_at"]), 19)
-		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\n", id, content, tags, scope, score, createdAt)
+		_, _ = fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\n", id, content, tags, scope, score, createdAt)
 	}
 	_ = w.Flush()
 }
 
 func printMemoriesTable(memories []interface{}) {
 	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(w, "ID\tCONTENT\tTAGS\tSCOPE\tCREATED_AT")
+	_, _ = fmt.Fprintln(w, "ID\tCONTENT\tTAGS\tSCOPE\tCREATED_AT")
 	for _, item := range memories {
 		m, ok := item.(map[string]interface{})
 		if !ok {
@@ -251,7 +251,7 @@ func printMemoriesTable(memories []interface{}) {
 		tags := tagsStr(m["tags"])
 		scope := strVal(m["scope"])
 		createdAt := shortStr(strVal(m["created_at"]), 19)
-		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n", id, content, tags, scope, createdAt)
+		_, _ = fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n", id, content, tags, scope, createdAt)
 	}
 	_ = w.Flush()
 }
@@ -281,7 +281,7 @@ func printSingleMemory(raw interface{}) {
 		default:
 			val = fmt.Sprintf("%v", v)
 		}
-		fmt.Fprintf(w, "%s\t%s\n", k, val)
+		_, _ = fmt.Fprintf(w, "%s\t%s\n", k, val)
 	}
 	_ = w.Flush()
 }
@@ -289,7 +289,7 @@ func printSingleMemory(raw interface{}) {
 func printKeyValue(m map[string]interface{}) {
 	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
 	for k, v := range m {
-		fmt.Fprintf(w, "%s\t%v\n", k, v)
+		_, _ = fmt.Fprintf(w, "%s\t%v\n", k, v)
 	}
 	_ = w.Flush()
 }

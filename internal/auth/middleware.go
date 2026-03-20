@@ -19,9 +19,9 @@ func UserIDFromContext(ctx context.Context) string {
 }
 
 // BearerAuth returns an HTTP middleware that validates Bearer tokens using the
-// provided Store. On success it injects the user_id into the request context.
+// provided UserStorer. On success it injects the user_id into the request context.
 // On failure it responds with 401 Unauthorized.
-func BearerAuth(store *Store) func(http.Handler) http.Handler {
+func BearerAuth(store UserStorer) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			token := extractBearerToken(r)
@@ -48,7 +48,7 @@ func BearerAuth(store *Store) func(http.Handler) http.Handler {
 
 // OrgTokenAuth returns an HTTP middleware that validates org-level Bearer tokens.
 // On success it injects the org_id into the request context via orgIDKey.
-func OrgTokenAuth(store *Store) func(http.Handler) http.Handler {
+func OrgTokenAuth(store UserStorer) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			token := extractBearerToken(r)

@@ -15,6 +15,15 @@ import (
 // ErrNotFound is returned when a token or user is not found.
 var ErrNotFound = errors.New("not found")
 
+// UserStorer is the interface used by handlers to read and write users/org-tokens.
+// The concrete DynamoDB Store implements this; tests may use a fake.
+type UserStorer interface {
+	GetOrgToken(ctx context.Context, token string) (*OrgToken, error)
+	PutUser(ctx context.Context, u *User) error
+	GetUser(ctx context.Context, userID string) (*User, error)
+	GetUserByToken(ctx context.Context, token string) (*User, error)
+}
+
 // Store handles DynamoDB operations for org tokens and users.
 type Store struct {
 	client          *dynamodb.Client

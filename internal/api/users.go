@@ -12,11 +12,11 @@ import (
 
 // UserServer handles user registration endpoints.
 type UserServer struct {
-	store *auth.Store
+	store auth.UserStorer
 }
 
 // NewUserServer creates a new UserServer.
-func NewUserServer(store *auth.Store) *UserServer {
+func NewUserServer(store auth.UserStorer) *UserServer {
 	return &UserServer{store: store}
 }
 

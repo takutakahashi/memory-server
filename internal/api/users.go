@@ -108,11 +108,7 @@ func (us *UserServer) handleCreateUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	status := http.StatusCreated
-	if !isNew {
-		status = http.StatusOK
-	}
-	writeJSON(w, status, user)
+	writeJSON(w, http.StatusOK, user)
 }
 
 // handleGetUser handles GET /api/v1/users/{user_id}

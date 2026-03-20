@@ -12,6 +12,7 @@ import (
 	"github.com/takutakahashi/memory-server/internal/api"
 	"github.com/takutakahashi/memory-server/internal/auth"
 	"github.com/takutakahashi/memory-server/internal/memory"
+	"github.com/takutakahashi/memory-server/internal/migrate"
 	mcpserver "github.com/takutakahashi/memory-server/internal/mcp"
 )
 
@@ -22,6 +23,13 @@ func main() {
 	if err != nil {
 		log.Fatalf("failed to load AWS config: %v", err)
 	}
+
+	// Ensure DynamoDB tables exist before starting the server.
+	log.Println("Running DynamoDB schema migration…")
+	if err := migrate.EnsureTables(ctx, cfg); err != nil {
+		log.Fatalf("DynamoDB migration failed: %v", err)
+	}
+	log.Println("DynamoDB schema migration complete.")
 
 	svc := memory.NewService(cfg)
 

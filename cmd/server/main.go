@@ -24,12 +24,12 @@ func main() {
 		log.Fatalf("failed to load AWS config: %v", err)
 	}
 
-	// Ensure DynamoDB tables exist before starting the server.
-	log.Println("Running DynamoDB schema migration…")
-	if err := migrate.EnsureTables(ctx, cfg); err != nil {
+	// Run versioned DynamoDB schema migrations before starting the server.
+	log.Println("Running DynamoDB schema migrations…")
+	if err := migrate.Run(ctx, cfg); err != nil {
 		log.Fatalf("DynamoDB migration failed: %v", err)
 	}
-	log.Println("DynamoDB schema migration complete.")
+	log.Println("DynamoDB schema migrations complete.")
 
 	svc := memory.NewService(cfg)
 

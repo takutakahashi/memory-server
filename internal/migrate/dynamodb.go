@@ -1,5 +1,6 @@
-// Package migrate provides DynamoDB schema migration utilities.
-// It ensures all required tables exist at server startup, creating them if necessary.
+// Package migrate provides a versioned DynamoDB schema migration system.
+// Migrations are defined in migrations.go and tracked in the schema_migrations
+// DynamoDB table, so each migration is applied exactly once.
 package migrate
 
 import (
@@ -7,7 +8,6 @@ import (
 	"errors"
 	"fmt"
 	"log"
-	"os"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -15,43 +15,13 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
 )
 
-// EnsureTables creates the required DynamoDB tables if they do not already exist.
-// It is safe to call on every startup: existing tables are left untouched.
+// EnsureTables is kept for backward compatibility.
+// New code should call Run() directly.
 func EnsureTables(ctx context.Context, cfg aws.Config) error {
-	client := dynamodb.NewFromConfig(cfg, func(o *dynamodb.Options) {
-		if ep := os.Getenv("DYNAMODB_ENDPOINT_URL"); ep != "" {
-			o.BaseEndpoint = aws.String(ep)
-		}
-	})
-
-	memoriesTable := os.Getenv("DYNAMODB_TABLE_NAME")
-	if memoriesTable == "" {
-		memoriesTable = "memories"
-	}
-	orgTokensTable := os.Getenv("ORG_TOKENS_TABLE_NAME")
-	if orgTokensTable == "" {
-		orgTokensTable = "org_tokens"
-	}
-	usersTable := os.Getenv("USERS_TABLE_NAME")
-	if usersTable == "" {
-		usersTable = "users"
-	}
-
-	defs := []tableDefinition{
-		memoriesTableDef(memoriesTable),
-		orgTokensTableDef(orgTokensTable),
-		usersTableDef(usersTable),
-	}
-
-	for _, def := range defs {
-		if err := ensureTable(ctx, client, def); err != nil {
-			return fmt.Errorf("ensure table %q: %w", aws.ToString(def.input.TableName), err)
-		}
-	}
-	return nil
+	return Run(ctx, cfg)
 }
 
-// tableDefinition bundles a CreateTableInput with a human-readable name for logging.
+// tableDefinition bundles a CreateTableInput for use by migration functions.
 type tableDefinition struct {
 	input *dynamodb.CreateTableInput
 }
@@ -60,7 +30,6 @@ type tableDefinition struct {
 func ensureTable(ctx context.Context, client *dynamodb.Client, def tableDefinition) error {
 	tableName := aws.ToString(def.input.TableName)
 
-	// Check whether the table already exists.
 	_, err := client.DescribeTable(ctx, &dynamodb.DescribeTableInput{
 		TableName: def.input.TableName,
 	})
@@ -74,13 +43,11 @@ func ensureTable(ctx context.Context, client *dynamodb.Client, def tableDefiniti
 		return fmt.Errorf("describe table: %w", err)
 	}
 
-	// Table does not exist — create it.
 	log.Printf("[migrate] creating table %q …", tableName)
 	if _, err := client.CreateTable(ctx, def.input); err != nil {
 		return fmt.Errorf("create table: %w", err)
 	}
 
-	// Wait until the table is ACTIVE (up to 2 minutes).
 	if err := waitUntilActive(ctx, client, tableName, 2*time.Minute); err != nil {
 		return fmt.Errorf("wait for table %q to become active: %w", tableName, err)
 	}
@@ -89,7 +56,7 @@ func ensureTable(ctx context.Context, client *dynamodb.Client, def tableDefiniti
 	return nil
 }
 
-// waitUntilActive polls DescribeTable until the table status is ACTIVE or the timeout is reached.
+// waitUntilActive polls DescribeTable until the table status is ACTIVE or the timeout expires.
 func waitUntilActive(ctx context.Context, client *dynamodb.Client, tableName string, timeout time.Duration) error {
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
@@ -112,7 +79,7 @@ func waitUntilActive(ctx context.Context, client *dynamodb.Client, tableName str
 }
 
 // ---------------------------------------------------------------------------
-// Table definitions
+// Table definitions (used by migration functions in migrations.go)
 // ---------------------------------------------------------------------------
 
 func memoriesTableDef(tableName string) tableDefinition {

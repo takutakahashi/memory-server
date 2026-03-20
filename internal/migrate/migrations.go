@@ -21,6 +21,14 @@ type Migration struct {
 	Up          func(ctx context.Context, client *dynamodb.Client) error
 }
 
+// All returns a copy of the ordered migration list.
+// Intended for use in tests and diagnostic tooling.
+func All() []Migration {
+	cp := make([]Migration, len(allMigrations))
+	copy(cp, allMigrations)
+	return cp
+}
+
 // allMigrations is the ordered list of all schema migrations.
 // New migrations must always be appended at the end.
 var allMigrations = []Migration{

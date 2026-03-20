@@ -23,13 +23,13 @@ func main() {
 	subArgs := os.Args[2:]
 
 	switch group {
-	case "org":
-		if err := runOrgCommand(subArgs); err != nil {
+	case "user":
+		if err := runUserCommand(subArgs); err != nil {
 			fmt.Fprintf(os.Stderr, "error: %v\n", err)
 			os.Exit(1)
 		}
 	default:
-		fmt.Fprintf(os.Stderr, "unknown command group: %s\n", group)
+		fmt.Fprintf(os.Stderr, "unknown command: %s\n", group)
 		printUsage()
 		os.Exit(1)
 	}
@@ -39,50 +39,51 @@ func printUsage() {
 	fmt.Fprintf(os.Stderr, `Usage: memory-admin <command> [options]
 
 Commands:
-  org create  --org-id ORG_ID [--description TEXT] [--token TOKEN]
-              Create a new organization and generate an org token.
+  user create  --user-id USER_ID [--description TEXT] [--token TOKEN]
+               Create a new user and generate an API token.
 
 Environment:
   AWS_REGION             AWS region (default: us-east-1)
   DYNAMODB_ENDPOINT_URL  Override DynamoDB endpoint (e.g. http://localhost:4566 for LocalStack)
-  ORG_TOKENS_TABLE_NAME  DynamoDB table name for org tokens (default: org_tokens)
+  USERS_TABLE_NAME       DynamoDB table name for users (default: users)
 `)
 }
 
-func runOrgCommand(args []string) error {
+func runUserCommand(args []string) error {
 	if len(args) == 0 {
-		fmt.Fprintf(os.Stderr, "Usage: memory-admin org <subcommand>\n\nSubcommands:\n  create\n")
+		fmt.Fprintf(os.Stderr, "Usage: memory-admin user <subcommand>\n\nSubcommands:\n  create\n")
 		return fmt.Errorf("subcommand required")
 	}
 
 	switch args[0] {
 	case "create":
-		return runOrgCreate(args[1:])
+		return runUserCreate(args[1:])
 	default:
-		return fmt.Errorf("unknown org subcommand: %s", args[0])
+		return fmt.Errorf("unknown user subcommand: %s", args[0])
 	}
 }
 
-func runOrgCreate(args []string) error {
-	fs := flag.NewFlagSet("org create", flag.ContinueOnError)
-	orgID := fs.String("org-id", "", "Organization ID (required)")
-	description := fs.String("description", "", "Description of the organization")
-	token := fs.String("token", "", "Org token (optional; auto-generated as 'org_<uuid>' if not specified)")
+func runUserCreate(args []string) error {
+	fs := flag.NewFlagSet("user create", flag.ContinueOnError)
+	userID := fs.String("user-id", "", "User ID (optional; auto-generated if not specified)")
+	description := fs.String("description", "", "Description of the user")
+	token := fs.String("token", "", "API token (optional; auto-generated as 'usr_<uuid>' if not specified)")
 	outputJSON := fs.Bool("json", false, "Output result as JSON")
 
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
 
-	if *orgID == "" {
-		fs.Usage()
-		return fmt.Errorf("--org-id is required")
+	// Auto-generate user_id if not provided
+	uid := *userID
+	if uid == "" {
+		uid = uuid.NewString()
 	}
 
 	// Generate token if not provided
-	orgToken := *token
-	if orgToken == "" {
-		orgToken = "org_" + uuid.New().String()
+	userToken := *token
+	if userToken == "" {
+		userToken = "usr_" + uuid.NewString()
 	}
 
 	ctx := context.Background()
@@ -94,26 +95,26 @@ func runOrgCreate(args []string) error {
 
 	store := auth.NewStore(cfg)
 
-	t := &auth.OrgToken{
-		Token:       orgToken,
-		OrgID:       *orgID,
+	u := &auth.User{
+		UserID:      uid,
+		Token:       userToken,
 		Description: *description,
 		CreatedAt:   time.Now().UTC(),
 	}
 
-	if err := store.PutOrgToken(ctx, t); err != nil {
-		return fmt.Errorf("create org token: %w", err)
+	if err := store.PutUser(ctx, u); err != nil {
+		return fmt.Errorf("create user: %w", err)
 	}
 
 	if *outputJSON {
-		b, _ := json.MarshalIndent(t, "", "  ")
+		b, _ := json.MarshalIndent(u, "", "  ")
 		fmt.Println(string(b))
 	} else {
-		fmt.Printf("Organization created successfully.\n\n")
-		fmt.Printf("  org_id:      %s\n", t.OrgID)
-		fmt.Printf("  token:       %s\n", t.Token)
-		fmt.Printf("  description: %s\n", t.Description)
-		fmt.Printf("  created_at:  %s\n", t.CreatedAt.Format(time.RFC3339))
+		fmt.Printf("User created successfully.\n\n")
+		fmt.Printf("  user_id:     %s\n", u.UserID)
+		fmt.Printf("  token:       %s\n", u.Token)
+		fmt.Printf("  description: %s\n", u.Description)
+		fmt.Printf("  created_at:  %s\n", u.CreatedAt.Format(time.RFC3339))
 		fmt.Printf("\nKeep the token safe — it cannot be retrieved again.\n")
 	}
 

@@ -129,24 +129,6 @@ func memoriesTableDef(tableName string) tableDefinition {
 	}
 }
 
-func orgTokensTableDef(tableName string) tableDefinition {
-	return tableDefinition{
-		input: &dynamodb.CreateTableInput{
-			TableName: aws.String(tableName),
-			AttributeDefinitions: []types.AttributeDefinition{
-				{AttributeName: aws.String("token"), AttributeType: types.ScalarAttributeTypeS},
-			},
-			KeySchema: []types.KeySchemaElement{
-				{AttributeName: aws.String("token"), KeyType: types.KeyTypeHash},
-			},
-			ProvisionedThroughput: &types.ProvisionedThroughput{
-				ReadCapacityUnits:  aws.Int64(5),
-				WriteCapacityUnits: aws.Int64(5),
-			},
-		},
-	}
-}
-
 func usersTableDef(tableName string) tableDefinition {
 	return tableDefinition{
 		input: &dynamodb.CreateTableInput{

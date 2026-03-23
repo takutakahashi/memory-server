@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -13,6 +14,15 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
 )
+
+// errMigrationSkipped is returned when migrations cannot run due to insufficient
+// IAM permissions. The server can still start in this case.
+var errMigrationSkipped = errors.New("migration skipped: insufficient permissions")
+
+// isAccessDenied reports whether an error is a DynamoDB AccessDeniedException.
+func isAccessDenied(err error) bool {
+	return err != nil && strings.Contains(err.Error(), "AccessDeniedException")
+}
 
 const schemaMigrationsTable = "schema_migrations"
 
@@ -26,11 +36,17 @@ type appliedRecord struct {
 // Run applies all pending migrations in order.
 // It is idempotent: already-applied migrations are tracked in the schema_migrations
 // DynamoDB table and will not be re-executed.
+// If the caller lacks IAM permissions to access the schema_migrations table,
+// migrations are skipped with a warning rather than failing fatally.
 func Run(ctx context.Context, cfg aws.Config) error {
 	client := newDynamoClient(cfg)
 
 	// 1. Ensure the tracking table exists.
 	if err := ensureMigrationsTable(ctx, client); err != nil {
+		if errors.Is(err, errMigrationSkipped) {
+			log.Printf("[migrate] WARNING: %v – skipping all migrations", err)
+			return nil
+		}
 		return fmt.Errorf("ensure schema_migrations table: %w", err)
 	}
 
@@ -81,7 +97,12 @@ func ensureMigrationsTable(ctx context.Context, client *dynamodb.Client) error {
 	}
 
 	var notFound *types.ResourceNotFoundException
-	if !errors.As(err, &notFound) {
+	if errors.As(err, &notFound) {
+		// Table doesn't exist yet — fall through to create it.
+	} else if isAccessDenied(err) {
+		// Insufficient IAM permissions — skip migrations gracefully.
+		return fmt.Errorf("%w: %v", errMigrationSkipped, err)
+	} else {
 		return fmt.Errorf("describe schema_migrations: %w", err)
 	}
 

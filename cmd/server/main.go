@@ -2,8 +2,10 @@ package main
 
 import (
 	"context"
+	"embed"
 	"encoding/json"
 	"fmt"
+	"io/fs"
 	"log"
 	"net/http"
 	"os"
@@ -15,6 +17,9 @@ import (
 	"github.com/takutakahashi/memory-server/internal/migrate"
 	mcpserver "github.com/takutakahashi/memory-server/internal/mcp"
 )
+
+//go:embed web
+var webFS embed.FS
 
 func main() {
 	ctx := context.Background()
@@ -34,6 +39,13 @@ func main() {
 	svc := memory.NewService(cfg)
 
 	mux := http.NewServeMux()
+
+	// Web UI — serve embedded static files at /
+	webSub, err := fs.Sub(webFS, "web")
+	if err != nil {
+		log.Fatalf("failed to create web sub-filesystem: %v", err)
+	}
+	mux.Handle("/", http.FileServer(http.FS(webSub)))
 
 	// Health check
 	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {

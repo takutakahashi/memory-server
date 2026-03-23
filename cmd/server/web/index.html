@@ -1,0 +1,631 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Memory Viewer</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg: #0f1117;
+      --surface: #1a1d27;
+      --surface2: #242736;
+      --border: #2e3247;
+      --accent: #6c63ff;
+      --accent-hover: #7d75ff;
+      --text: #e2e8f0;
+      --text-muted: #8892a4;
+      --success: #10b981;
+      --danger: #ef4444;
+      --tag-bg: #2e3a5e;
+      --tag-text: #93b4f5;
+      --radius: 10px;
+      --shadow: 0 4px 24px rgba(0,0,0,0.4);
+    }
+
+    body {
+      font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      min-height: 100vh;
+      padding: 24px;
+    }
+
+    header {
+      max-width: 900px;
+      margin: 0 auto 32px;
+    }
+
+    header h1 {
+      font-size: 1.8rem;
+      font-weight: 700;
+      background: linear-gradient(135deg, #6c63ff, #a78bfa);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+      margin-bottom: 4px;
+    }
+
+    header p {
+      color: var(--text-muted);
+      font-size: 0.9rem;
+    }
+
+    .card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 20px;
+      box-shadow: var(--shadow);
+    }
+
+    .token-section {
+      max-width: 900px;
+      margin: 0 auto 24px;
+    }
+
+    .token-row {
+      display: flex;
+      gap: 10px;
+      align-items: center;
+    }
+
+    .token-row input {
+      flex: 1;
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      color: var(--text);
+      padding: 10px 14px;
+      font-size: 0.95rem;
+      font-family: 'Courier New', monospace;
+      outline: none;
+      transition: border-color 0.2s;
+    }
+
+    .token-row input:focus {
+      border-color: var(--accent);
+    }
+
+    .btn {
+      background: var(--accent);
+      color: #fff;
+      border: none;
+      border-radius: 8px;
+      padding: 10px 20px;
+      font-size: 0.95rem;
+      cursor: pointer;
+      font-weight: 600;
+      transition: background 0.2s, transform 0.1s;
+      white-space: nowrap;
+    }
+
+    .btn:hover { background: var(--accent-hover); }
+    .btn:active { transform: scale(0.97); }
+    .btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+    .btn-ghost {
+      background: transparent;
+      border: 1px solid var(--border);
+      color: var(--text-muted);
+    }
+    .btn-ghost:hover { background: var(--surface2); color: var(--text); }
+
+    .btn-danger {
+      background: var(--danger);
+    }
+    .btn-danger:hover { background: #dc2626; }
+
+    .main {
+      max-width: 900px;
+      margin: 0 auto;
+      display: none;
+    }
+
+    .main.visible { display: block; }
+
+    .controls {
+      display: flex;
+      gap: 10px;
+      margin-bottom: 20px;
+      flex-wrap: wrap;
+    }
+
+    .search-input {
+      flex: 1;
+      min-width: 200px;
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      color: var(--text);
+      padding: 10px 14px;
+      font-size: 0.95rem;
+      outline: none;
+      transition: border-color 0.2s;
+    }
+
+    .search-input:focus { border-color: var(--accent); }
+
+    .scope-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      padding: 3px 10px;
+      border-radius: 20px;
+      font-size: 0.75rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+
+    .scope-private { background: #3b2e5e; color: #c4b5fd; }
+    .scope-public { background: #1e3a2e; color: #6ee7b7; }
+
+    .memories-grid {
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+
+    .memory-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 16px;
+      transition: border-color 0.2s, transform 0.15s;
+    }
+
+    .memory-card:hover {
+      border-color: var(--accent);
+      transform: translateY(-1px);
+    }
+
+    .memory-header {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 10px;
+      margin-bottom: 10px;
+    }
+
+    .memory-meta {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+
+    .memory-id {
+      font-family: monospace;
+      font-size: 0.72rem;
+      color: var(--text-muted);
+    }
+
+    .memory-content {
+      color: var(--text);
+      font-size: 0.95rem;
+      line-height: 1.6;
+      white-space: pre-wrap;
+      word-break: break-word;
+      margin-bottom: 10px;
+    }
+
+    .memory-footer {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+
+    .tags {
+      display: flex;
+      gap: 6px;
+      flex-wrap: wrap;
+    }
+
+    .tag {
+      background: var(--tag-bg);
+      color: var(--tag-text);
+      padding: 3px 10px;
+      border-radius: 20px;
+      font-size: 0.78rem;
+      font-weight: 500;
+    }
+
+    .memory-timestamp {
+      font-size: 0.78rem;
+      color: var(--text-muted);
+    }
+
+    .score-badge {
+      background: #2d3a1e;
+      color: #86efac;
+      font-size: 0.75rem;
+      padding: 3px 9px;
+      border-radius: 20px;
+      font-weight: 600;
+    }
+
+    .section-title {
+      font-size: 1rem;
+      font-weight: 600;
+      color: var(--text-muted);
+      margin-bottom: 14px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .count-badge {
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      color: var(--text-muted);
+      font-size: 0.78rem;
+      padding: 2px 9px;
+      border-radius: 20px;
+    }
+
+    .empty-state {
+      text-align: center;
+      padding: 60px 20px;
+      color: var(--text-muted);
+    }
+
+    .empty-state .icon {
+      font-size: 3rem;
+      margin-bottom: 16px;
+      display: block;
+    }
+
+    .empty-state p {
+      font-size: 1rem;
+    }
+
+    .error-msg {
+      background: #2d1515;
+      border: 1px solid #7f1d1d;
+      color: #fca5a5;
+      border-radius: 8px;
+      padding: 12px 16px;
+      margin-bottom: 16px;
+      font-size: 0.9rem;
+    }
+
+    .spinner {
+      width: 20px;
+      height: 20px;
+      border: 2px solid var(--border);
+      border-top-color: var(--accent);
+      border-radius: 50%;
+      animation: spin 0.7s linear infinite;
+      display: inline-block;
+    }
+
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    .loading-row {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      justify-content: center;
+      padding: 40px;
+      color: var(--text-muted);
+    }
+
+    .pagination {
+      display: flex;
+      justify-content: center;
+      gap: 10px;
+      margin-top: 20px;
+    }
+
+    .tab-row {
+      display: flex;
+      gap: 4px;
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 4px;
+      margin-bottom: 20px;
+    }
+
+    .tab {
+      flex: 1;
+      padding: 8px 16px;
+      border: none;
+      border-radius: 6px;
+      background: transparent;
+      color: var(--text-muted);
+      cursor: pointer;
+      font-size: 0.9rem;
+      font-weight: 500;
+      transition: all 0.2s;
+    }
+
+    .tab.active {
+      background: var(--accent);
+      color: #fff;
+    }
+
+    .panel { display: none; }
+    .panel.active { display: block; }
+
+    .user-info {
+      font-size: 0.85rem;
+      color: var(--text-muted);
+      margin-top: 8px;
+    }
+    .user-info span { color: var(--text); font-weight: 600; }
+
+    .actions-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 16px;
+      flex-wrap: wrap;
+      gap: 10px;
+    }
+  </style>
+</head>
+<body>
+
+<header>
+  <h1>🧠 Memory Viewer</h1>
+  <p>Bearer トークンを入力してメモリを表示します</p>
+</header>
+
+<div class="token-section card">
+  <div class="token-row">
+    <input type="password" id="tokenInput" placeholder="Bearer トークンを入力..." autocomplete="off" />
+    <button class="btn" id="loadBtn" onclick="loadMemories()">読み込む</button>
+    <button class="btn btn-ghost" id="clearBtn" onclick="clearAll()" style="display:none">クリア</button>
+  </div>
+  <div id="userInfo" class="user-info" style="margin-top:10px;display:none"></div>
+</div>
+
+<div class="main" id="main">
+  <div id="errorMsg" class="error-msg" style="display:none"></div>
+
+  <div class="tab-row">
+    <button class="tab active" onclick="switchTab('list')">📋 一覧</button>
+    <button class="tab" onclick="switchTab('search')">🔍 検索</button>
+  </div>
+
+  <!-- List Panel -->
+  <div class="panel active" id="panel-list">
+    <div class="actions-row">
+      <div class="section-title">
+        メモリ一覧
+        <span class="count-badge" id="totalCount">-</span>
+      </div>
+      <button class="btn btn-ghost" onclick="loadMemories()" style="padding:7px 14px;font-size:0.85rem">
+        ↻ 更新
+      </button>
+    </div>
+    <div id="memoriesList"></div>
+    <div class="pagination" id="pagination"></div>
+  </div>
+
+  <!-- Search Panel -->
+  <div class="panel" id="panel-search">
+    <div class="controls">
+      <input class="search-input" id="searchQuery" placeholder="検索クエリを入力（セマンティック検索）..." />
+      <button class="btn" onclick="searchMemories()">検索</button>
+    </div>
+    <div id="searchResults"></div>
+  </div>
+</div>
+
+<script>
+  let currentToken = '';
+  let nextToken = null;
+  let prevTokens = [];
+  let currentTab = 'list';
+  const BASE_URL = '';
+
+  function getHeaders() {
+    return {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${currentToken}`,
+    };
+  }
+
+  function switchTab(tab) {
+    currentTab = tab;
+    document.querySelectorAll('.tab').forEach((t, i) => {
+      t.classList.toggle('active', ['list','search'][i] === tab);
+    });
+    document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
+    document.getElementById(`panel-${tab}`).classList.add('active');
+  }
+
+  function showError(msg) {
+    const el = document.getElementById('errorMsg');
+    el.textContent = msg;
+    el.style.display = 'block';
+    setTimeout(() => { el.style.display = 'none'; }, 6000);
+  }
+
+  function hideError() {
+    document.getElementById('errorMsg').style.display = 'none';
+  }
+
+  async function loadMemories(nt = null) {
+    const token = document.getElementById('tokenInput').value.trim();
+    if (!token) { showError('トークンを入力してください'); return; }
+    currentToken = token;
+    hideError();
+
+    const loadBtn = document.getElementById('loadBtn');
+    loadBtn.disabled = true;
+    loadBtn.innerHTML = '<span class="spinner"></span>';
+
+    document.getElementById('memoriesList').innerHTML = '<div class="loading-row"><span class="spinner"></span> 読み込み中...</div>';
+    document.getElementById('main').classList.add('visible');
+    document.getElementById('clearBtn').style.display = '';
+
+    let url = `${BASE_URL}/api/v1/memories?limit=20`;
+    if (nt) url += `&next_token=${encodeURIComponent(nt)}`;
+
+    try {
+      const res = await fetch(url, { headers: getHeaders() });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body.error || `HTTP ${res.status}`);
+      }
+      const data = await res.json();
+      nextToken = data.next_token || null;
+      renderMemories(data.memories || [], 'memoriesList');
+      renderPagination(nt);
+
+      // Show user info from first memory
+      const memories = data.memories || [];
+      if (memories.length > 0) {
+        const uid = memories[0].user_id;
+        const info = document.getElementById('userInfo');
+        info.innerHTML = `User ID: <span>${uid}</span>`;
+        info.style.display = 'block';
+      }
+    } catch(e) {
+      showError('エラー: ' + e.message);
+      document.getElementById('memoriesList').innerHTML = '';
+      document.getElementById('main').classList.remove('visible');
+    } finally {
+      loadBtn.disabled = false;
+      loadBtn.innerHTML = '読み込む';
+    }
+  }
+
+  async function searchMemories() {
+    const query = document.getElementById('searchQuery').value.trim();
+    if (!query) return;
+    hideError();
+
+    const container = document.getElementById('searchResults');
+    container.innerHTML = '<div class="loading-row"><span class="spinner"></span> 検索中...</div>';
+
+    try {
+      const res = await fetch(`${BASE_URL}/api/v1/memories/search`, {
+        method: 'POST',
+        headers: getHeaders(),
+        body: JSON.stringify({ query, limit: 20 }),
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body.error || `HTTP ${res.status}`);
+      }
+      const results = await res.json();
+      renderSearchResults(results || [], container);
+    } catch(e) {
+      showError('エラー: ' + e.message);
+      container.innerHTML = '';
+    }
+  }
+
+  function renderMemories(memories, containerId) {
+    const el = document.getElementById(containerId);
+    const count = document.getElementById('totalCount');
+    if (count) count.textContent = memories.length + (nextToken ? '+' : '');
+
+    if (!memories.length) {
+      el.innerHTML = `<div class="empty-state"><span class="icon">🗂</span><p>メモリが見つかりません</p></div>`;
+      return;
+    }
+
+    el.innerHTML = `<div class="memories-grid">${memories.map(renderMemoryCard).join('')}</div>`;
+  }
+
+  function renderSearchResults(results, container) {
+    if (!results.length) {
+      container.innerHTML = `<div class="empty-state"><span class="icon">🔍</span><p>該当するメモリが見つかりません</p></div>`;
+      return;
+    }
+
+    container.innerHTML = `<div class="section-title">検索結果 <span class="count-badge">${results.length}</span></div>
+      <div class="memories-grid">${results.map(r => renderMemoryCard(r.memory, r.final_score)).join('')}</div>`;
+  }
+
+  function renderMemoryCard(m, score) {
+    const date = new Date(m.updated_at).toLocaleString('ja-JP', {
+      year: 'numeric', month: '2-digit', day: '2-digit',
+      hour: '2-digit', minute: '2-digit'
+    });
+    const tags = (m.tags || []).map(t => `<span class="tag">#${escapeHtml(t)}</span>`).join('');
+    const scopeClass = m.scope === 'public' ? 'scope-public' : 'scope-private';
+    const scopeLabel = m.scope === 'public' ? '🌐 public' : '🔒 private';
+    const scoreHtml = score != null ? `<span class="score-badge">score: ${score.toFixed(3)}</span>` : '';
+
+    return `
+    <div class="memory-card">
+      <div class="memory-header">
+        <div class="memory-meta">
+          <span class="scope-badge ${scopeClass}">${scopeLabel}</span>
+          <span class="memory-id">${m.memory_id}</span>
+          ${scoreHtml}
+        </div>
+      </div>
+      <div class="memory-content">${escapeHtml(m.content)}</div>
+      <div class="memory-footer">
+        <div class="tags">${tags}</div>
+        <span class="memory-timestamp">更新: ${date}</span>
+      </div>
+    </div>`;
+  }
+
+  function renderPagination(currentNt) {
+    const el = document.getElementById('pagination');
+    el.innerHTML = '';
+    if (currentNt) {
+      const prevBtn = document.createElement('button');
+      prevBtn.className = 'btn btn-ghost';
+      prevBtn.textContent = '← 前へ';
+      prevBtn.onclick = () => {
+        prevTokens.pop();
+        loadMemories(prevTokens[prevTokens.length - 1] || null);
+      };
+      el.appendChild(prevBtn);
+    }
+    if (nextToken) {
+      const nextBtn = document.createElement('button');
+      nextBtn.className = 'btn';
+      nextBtn.textContent = '次へ →';
+      nextBtn.onclick = () => {
+        prevTokens.push(currentNt);
+        loadMemories(nextToken);
+      };
+      el.appendChild(nextBtn);
+    }
+  }
+
+  function clearAll() {
+    currentToken = '';
+    nextToken = null;
+    prevTokens = [];
+    document.getElementById('tokenInput').value = '';
+    document.getElementById('main').classList.remove('visible');
+    document.getElementById('clearBtn').style.display = 'none';
+    document.getElementById('userInfo').style.display = 'none';
+    document.getElementById('searchQuery').value = '';
+    document.getElementById('searchResults').innerHTML = '';
+  }
+
+  function escapeHtml(str) {
+    return String(str)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;');
+  }
+
+  // Enter key support
+  document.getElementById('tokenInput').addEventListener('keydown', e => {
+    if (e.key === 'Enter') loadMemories();
+  });
+  document.getElementById('searchQuery')?.addEventListener('keydown', e => {
+    if (e.key === 'Enter') searchMemories();
+  });
+</script>
+</body>
+</html>

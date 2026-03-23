@@ -23,15 +23,19 @@ service:
   port: 8080
 
 ingress:
-  enabled: false
-  className: ""
-  annotations: {}
+  enabled: true
+  className: "nginx"
+  annotations:
+    cert-manager.io/cluster-issuer: "letsencrypt-prod"
   hosts:
-    - host: memory-server.local
+    - host: memory.in.takutakahashi.dev
       paths:
         - path: /
           pathType: Prefix
-  tls: []
+  tls:
+    - secretName: memory-server-tls
+      hosts:
+        - memory.in.takutakahashi.dev
 
 resources:
   limits:

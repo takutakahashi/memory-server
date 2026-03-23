@@ -60,6 +60,40 @@
       box-shadow: var(--shadow);
     }
 
+    /* Top-level page tabs */
+    .page-tabs {
+      max-width: 900px;
+      margin: 0 auto 20px;
+      display: flex;
+      gap: 4px;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 4px;
+    }
+
+    .page-tab {
+      flex: 1;
+      padding: 10px 16px;
+      border: none;
+      border-radius: 8px;
+      background: transparent;
+      color: var(--text-muted);
+      cursor: pointer;
+      font-size: 0.95rem;
+      font-weight: 600;
+      transition: all 0.2s;
+    }
+
+    .page-tab.active {
+      background: var(--accent);
+      color: #fff;
+    }
+
+    .page-section { display: none; }
+    .page-section.active { display: block; }
+
+    /* ── Memory viewer ── */
     .token-section {
       max-width: 900px;
       margin: 0 auto 24px;
@@ -84,9 +118,7 @@
       transition: border-color 0.2s;
     }
 
-    .token-row input:focus {
-      border-color: var(--accent);
-    }
+    .token-row input:focus { border-color: var(--accent); }
 
     .btn {
       background: var(--accent);
@@ -112,10 +144,10 @@
     }
     .btn-ghost:hover { background: var(--surface2); color: var(--text); }
 
-    .btn-danger {
-      background: var(--danger);
+    .btn-success {
+      background: var(--success);
     }
-    .btn-danger:hover { background: #dc2626; }
+    .btn-success:hover { background: #059669; }
 
     .main {
       max-width: 900px;
@@ -293,6 +325,16 @@
       font-size: 0.9rem;
     }
 
+    .success-msg {
+      background: #1a2d22;
+      border: 1px solid #166534;
+      color: #86efac;
+      border-radius: 8px;
+      padding: 12px 16px;
+      margin-bottom: 16px;
+      font-size: 0.9rem;
+    }
+
     .spinner {
       width: 20px;
       height: 20px;
@@ -367,68 +409,243 @@
       flex-wrap: wrap;
       gap: 10px;
     }
+
+    /* ── User management ── */
+    .admin-section {
+      max-width: 900px;
+      margin: 0 auto;
+    }
+
+    .form-grid {
+      display: grid;
+      gap: 14px;
+    }
+
+    .form-row {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+
+    .form-row label {
+      font-size: 0.85rem;
+      color: var(--text-muted);
+      font-weight: 500;
+    }
+
+    .form-row input {
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      color: var(--text);
+      padding: 10px 14px;
+      font-size: 0.95rem;
+      outline: none;
+      transition: border-color 0.2s;
+      font-family: inherit;
+    }
+
+    .form-row input:focus { border-color: var(--accent); }
+    .form-row input::placeholder { color: var(--text-muted); }
+
+    .form-hint {
+      font-size: 0.78rem;
+      color: var(--text-muted);
+      margin-top: 2px;
+    }
+
+    .result-card {
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 16px;
+      margin-top: 16px;
+    }
+
+    .result-card .result-title {
+      font-size: 0.85rem;
+      color: var(--text-muted);
+      margin-bottom: 10px;
+      font-weight: 600;
+    }
+
+    .result-row {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 6px 0;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .result-row:last-child { border-bottom: none; }
+
+    .result-key {
+      font-size: 0.82rem;
+      color: var(--text-muted);
+      min-width: 100px;
+      font-weight: 500;
+    }
+
+    .result-val {
+      font-family: 'Courier New', monospace;
+      font-size: 0.88rem;
+      color: var(--text);
+      word-break: break-all;
+      flex: 1;
+    }
+
+    .copy-btn {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      color: var(--text-muted);
+      border-radius: 6px;
+      padding: 3px 10px;
+      font-size: 0.78rem;
+      cursor: pointer;
+      transition: all 0.2s;
+      white-space: nowrap;
+    }
+    .copy-btn:hover { background: var(--surface2); color: var(--text); }
+    .copy-btn.copied { background: var(--success); color: #fff; border-color: var(--success); }
+
+    .divider {
+      border: none;
+      border-top: 1px solid var(--border);
+      margin: 24px 0;
+    }
   </style>
 </head>
 <body>
 
 <header>
   <h1>🧠 Memory Viewer</h1>
-  <p>Bearer トークンを入力してメモリを表示します</p>
+  <p>メモリの閲覧・検索とユーザー管理ができます</p>
 </header>
 
-<div class="token-section card">
-  <div class="token-row">
-    <input type="password" id="tokenInput" placeholder="Bearer トークンを入力..." autocomplete="off" />
-    <button class="btn" id="loadBtn" onclick="loadMemories()">読み込む</button>
-    <button class="btn btn-ghost" id="clearBtn" onclick="clearAll()" style="display:none">クリア</button>
-  </div>
-  <div id="userInfo" class="user-info" style="margin-top:10px;display:none"></div>
+<!-- Page-level tabs -->
+<div class="page-tabs">
+  <button class="page-tab active" onclick="switchPage('memories')">🧠 メモリ</button>
+  <button class="page-tab" onclick="switchPage('users')">👤 ユーザー管理</button>
 </div>
 
-<div class="main" id="main">
-  <div id="errorMsg" class="error-msg" style="display:none"></div>
-
-  <div class="tab-row">
-    <button class="tab active" onclick="switchTab('list')">📋 一覧</button>
-    <button class="tab" onclick="switchTab('search')">🔍 検索</button>
+<!-- ════════════════ MEMORY PAGE ════════════════ -->
+<div class="page-section active" id="page-memories">
+  <div class="token-section card">
+    <div class="token-row">
+      <input type="password" id="tokenInput" placeholder="Bearer トークンを入力..." autocomplete="off" />
+      <button class="btn" id="loadBtn" onclick="loadMemories()">読み込む</button>
+      <button class="btn btn-ghost" id="clearBtn" onclick="clearAll()" style="display:none">クリア</button>
+    </div>
+    <div id="userInfo" class="user-info" style="margin-top:10px;display:none"></div>
   </div>
 
-  <!-- List Panel -->
-  <div class="panel active" id="panel-list">
-    <div class="actions-row">
-      <div class="section-title">
-        メモリ一覧
-        <span class="count-badge" id="totalCount">-</span>
+  <div class="main" id="main">
+    <div id="errorMsg" class="error-msg" style="display:none"></div>
+
+    <div class="tab-row">
+      <button class="tab active" onclick="switchTab('list')">📋 一覧</button>
+      <button class="tab" onclick="switchTab('search')">🔍 検索</button>
+    </div>
+
+    <!-- List Panel -->
+    <div class="panel active" id="panel-list">
+      <div class="actions-row">
+        <div class="section-title">
+          メモリ一覧
+          <span class="count-badge" id="totalCount">-</span>
+        </div>
+        <button class="btn btn-ghost" onclick="loadMemories()" style="padding:7px 14px;font-size:0.85rem">
+          ↻ 更新
+        </button>
       </div>
-      <button class="btn btn-ghost" onclick="loadMemories()" style="padding:7px 14px;font-size:0.85rem">
-        ↻ 更新
-      </button>
+      <div id="memoriesList"></div>
+      <div class="pagination" id="pagination"></div>
     </div>
-    <div id="memoriesList"></div>
-    <div class="pagination" id="pagination"></div>
-  </div>
 
-  <!-- Search Panel -->
-  <div class="panel" id="panel-search">
-    <div class="controls">
-      <input class="search-input" id="searchQuery" placeholder="検索クエリを入力（セマンティック検索）..." />
-      <button class="btn" onclick="searchMemories()">検索</button>
+    <!-- Search Panel -->
+    <div class="panel" id="panel-search">
+      <div class="controls">
+        <input class="search-input" id="searchQuery" placeholder="検索クエリを入力（セマンティック検索）..." />
+        <button class="btn" onclick="searchMemories()">検索</button>
+      </div>
+      <div id="searchResults"></div>
     </div>
-    <div id="searchResults"></div>
+  </div>
+</div>
+
+<!-- ════════════════ USER MANAGEMENT PAGE ════════════════ -->
+<div class="page-section" id="page-users">
+  <div class="admin-section">
+
+    <!-- Admin token input -->
+    <div class="card" style="margin-bottom:20px">
+      <div class="token-row">
+        <input type="password" id="adminTokenInput" placeholder="Admin トークンを入力..." autocomplete="off" />
+      </div>
+      <p class="form-hint" style="margin-top:8px">ADMIN_TOKEN 環境変数に設定した値を入力してください</p>
+    </div>
+
+    <div id="adminErrorMsg" class="error-msg" style="display:none"></div>
+    <div id="adminSuccessMsg" class="success-msg" style="display:none"></div>
+
+    <!-- Create user -->
+    <div class="card" style="margin-bottom:20px">
+      <div class="section-title" style="margin-bottom:16px">✨ ユーザー作成</div>
+      <div class="form-grid">
+        <div class="form-row">
+          <label>User ID <span style="color:var(--text-muted);font-weight:400">（省略可 — 自動生成）</span></label>
+          <input type="text" id="createUserId" placeholder="例: alice" autocomplete="off" />
+        </div>
+        <div class="form-row">
+          <label>Token <span style="color:var(--text-muted);font-weight:400">（省略可 — usr_xxx 形式で自動生成）</span></label>
+          <input type="text" id="createToken" placeholder="例: my-secret-token" autocomplete="off" />
+        </div>
+        <div class="form-row">
+          <label>Description <span style="color:var(--text-muted);font-weight:400">（省略可）</span></label>
+          <input type="text" id="createDescription" placeholder="例: Alice のアカウント" autocomplete="off" />
+        </div>
+        <button class="btn btn-success" onclick="createUser()" style="width:fit-content">ユーザーを作成</button>
+      </div>
+      <div id="createResult" style="display:none"></div>
+    </div>
+
+    <hr class="divider" />
+
+    <!-- Lookup user -->
+    <div class="card">
+      <div class="section-title" style="margin-bottom:16px">🔎 ユーザー検索</div>
+      <div class="controls">
+        <input class="search-input" id="lookupUserId" placeholder="User ID を入力..." autocomplete="off" />
+        <button class="btn" onclick="lookupUser()">検索</button>
+      </div>
+      <div id="lookupResult"></div>
+    </div>
+
   </div>
 </div>
 
 <script>
+  // ── State ──
   let currentToken = '';
   let nextToken = null;
   let prevTokens = [];
   let currentTab = 'list';
   const BASE_URL = '';
 
-  function getHeaders() {
+  // ── Page switching ──
+  function switchPage(page) {
+    document.querySelectorAll('.page-tab').forEach((t, i) => {
+      t.classList.toggle('active', ['memories','users'][i] === page);
+    });
+    document.querySelectorAll('.page-section').forEach(s => s.classList.remove('active'));
+    document.getElementById(`page-${page}`).classList.add('active');
+  }
+
+  // ── Memory helpers ──
+  function getHeaders(token) {
     return {
       'Content-Type': 'application/json',
-      'Authorization': `Bearer ${currentToken}`,
+      'Authorization': `Bearer ${token || currentToken}`,
     };
   }
 
@@ -441,17 +658,25 @@
     document.getElementById(`panel-${tab}`).classList.add('active');
   }
 
-  function showError(msg) {
-    const el = document.getElementById('errorMsg');
+  function showError(msg, prefix='') {
+    const el = document.getElementById(prefix + 'errorMsg');
     el.textContent = msg;
     el.style.display = 'block';
     setTimeout(() => { el.style.display = 'none'; }, 6000);
   }
 
-  function hideError() {
-    document.getElementById('errorMsg').style.display = 'none';
+  function showSuccess(msg) {
+    const el = document.getElementById('adminSuccessMsg');
+    el.textContent = msg;
+    el.style.display = 'block';
+    setTimeout(() => { el.style.display = 'none'; }, 5000);
   }
 
+  function hideError(prefix='') {
+    document.getElementById(prefix + 'errorMsg').style.display = 'none';
+  }
+
+  // ── Load memories ──
   async function loadMemories(nt = null) {
     const token = document.getElementById('tokenInput').value.trim();
     if (!token) { showError('トークンを入力してください'); return; }
@@ -480,7 +705,6 @@
       renderMemories(data.memories || [], 'memoriesList');
       renderPagination(nt);
 
-      // Show user info from first memory
       const memories = data.memories || [];
       if (memories.length > 0) {
         const uid = memories[0].user_id;
@@ -611,6 +835,110 @@
     document.getElementById('searchResults').innerHTML = '';
   }
 
+  // ── User management ──
+  function getAdminHeaders() {
+    const token = document.getElementById('adminTokenInput').value.trim();
+    return {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${token}`,
+    };
+  }
+
+  async function createUser() {
+    const adminToken = document.getElementById('adminTokenInput').value.trim();
+    if (!adminToken) { showError('Admin トークンを入力してください', 'admin'); return; }
+
+    const userId      = document.getElementById('createUserId').value.trim();
+    const token       = document.getElementById('createToken').value.trim();
+    const description = document.getElementById('createDescription').value.trim();
+
+    const body = {};
+    if (userId)      body.user_id     = userId;
+    if (token)       body.token       = token;
+    if (description) body.description = description;
+
+    try {
+      const res = await fetch(`${BASE_URL}/api/v1/users`, {
+        method: 'POST',
+        headers: getAdminHeaders(),
+        body: JSON.stringify(body),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+
+      showSuccess('ユーザーを作成しました');
+      renderUserResult('createResult', data);
+
+      // Clear inputs
+      document.getElementById('createUserId').value = '';
+      document.getElementById('createToken').value = '';
+      document.getElementById('createDescription').value = '';
+    } catch(e) {
+      showError('エラー: ' + e.message, 'admin');
+    }
+  }
+
+  async function lookupUser() {
+    const adminToken = document.getElementById('adminTokenInput').value.trim();
+    if (!adminToken) { showError('Admin トークンを入力してください', 'admin'); return; }
+
+    const userId = document.getElementById('lookupUserId').value.trim();
+    if (!userId) { showError('User ID を入力してください', 'admin'); return; }
+
+    const container = document.getElementById('lookupResult');
+    container.innerHTML = '<div class="loading-row"><span class="spinner"></span></div>';
+
+    try {
+      const res = await fetch(`${BASE_URL}/api/v1/users/${encodeURIComponent(userId)}`, {
+        headers: getAdminHeaders(),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+      renderUserResult('lookupResult', data);
+    } catch(e) {
+      showError('エラー: ' + e.message, 'admin');
+      container.innerHTML = '';
+    }
+  }
+
+  function renderUserResult(containerId, user) {
+    const el = document.getElementById(containerId);
+    const createdAt = user.created_at
+      ? new Date(user.created_at).toLocaleString('ja-JP')
+      : '-';
+
+    const rows = [
+      { key: 'User ID',     val: user.user_id     || '-' },
+      { key: 'Token',       val: user.token        || '-', copy: true },
+      { key: 'Description', val: user.description  || '-' },
+      { key: '作成日時',    val: createdAt },
+    ];
+
+    el.style.display = 'block';
+    el.innerHTML = `
+      <div class="result-card">
+        <div class="result-title">ユーザー情報</div>
+        ${rows.map(r => `
+          <div class="result-row">
+            <span class="result-key">${r.key}</span>
+            <span class="result-val">${escapeHtml(r.val)}</span>
+            ${r.copy ? `<button class="copy-btn" onclick="copyText(this, '${escapeHtml(r.val)}')">コピー</button>` : ''}
+          </div>
+        `).join('')}
+      </div>`;
+  }
+
+  function copyText(btn, text) {
+    navigator.clipboard.writeText(text).then(() => {
+      btn.textContent = '✓ コピー済み';
+      btn.classList.add('copied');
+      setTimeout(() => {
+        btn.textContent = 'コピー';
+        btn.classList.remove('copied');
+      }, 2000);
+    });
+  }
+
   function escapeHtml(str) {
     return String(str)
       .replace(/&/g, '&amp;')
@@ -619,12 +947,15 @@
       .replace(/"/g, '&quot;');
   }
 
-  // Enter key support
+  // ── Keyboard shortcuts ──
   document.getElementById('tokenInput').addEventListener('keydown', e => {
     if (e.key === 'Enter') loadMemories();
   });
-  document.getElementById('searchQuery')?.addEventListener('keydown', e => {
+  document.getElementById('searchQuery').addEventListener('keydown', e => {
     if (e.key === 'Enter') searchMemories();
+  });
+  document.getElementById('lookupUserId').addEventListener('keydown', e => {
+    if (e.key === 'Enter') lookupUser();
   });
 </script>
 </body>

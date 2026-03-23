@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -231,10 +232,15 @@ func (s *Store) Delete(ctx context.Context, memoryID string) error {
 }
 
 // Ping checks connectivity to DynamoDB by describing the table.
+// AccessDeniedException is treated as success: it proves the endpoint is reachable
+// even when the caller lacks DescribeTable permission.
 func (s *Store) Ping(ctx context.Context) error {
 	_, err := s.client.DescribeTable(ctx, &dynamodb.DescribeTableInput{
 		TableName: aws.String(s.tableName),
 	})
+	if err != nil && strings.Contains(err.Error(), "AccessDeniedException") {
+		return nil
+	}
 	return err
 }
 

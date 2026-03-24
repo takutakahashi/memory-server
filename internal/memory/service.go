@@ -17,6 +17,7 @@ type Service struct {
 	Vectors   *S3VectorsClient
 	Embedding *EmbeddingClient
 	Scorer    *Scorer
+	Summarize *SummarizeClient
 }
 
 // NewService creates a new Service using the given AWS config.
@@ -26,15 +27,20 @@ func NewService(cfg aws.Config) *Service {
 		Vectors:   NewS3VectorsClient(cfg),
 		Embedding: NewEmbeddingClient(cfg),
 		Scorer:    NewScorer(),
+		Summarize: NewSummarizeClient(cfg),
 	}
 }
 
 // AddInput holds input parameters for Add.
 type AddInput struct {
-	UserID  string
-	Content string
-	Tags    []string
-	Scope   Scope
+	UserID   string
+	Content  string
+	Tags     []string
+	Scope    Scope
+	// MemoryID is an optional caller-supplied ID. When set, the memory is stored
+	// with this exact ID instead of a newly generated UUID.  This allows external
+	// systems (e.g. agentapi-proxy) to maintain their own ID namespace.
+	MemoryID string
 }
 
 // AddResult holds the result of Add.
@@ -64,7 +70,10 @@ func (s *Service) Add(ctx context.Context, input AddInput) (*AddResult, error) {
 		return nil, fmt.Errorf("generate embedding: %w", err)
 	}
 
-	memoryID := uuid.New().String()
+	memoryID := input.MemoryID
+	if memoryID == "" {
+		memoryID = uuid.New().String()
+	}
 	now := time.Now().UTC()
 
 	if err := s.Vectors.PutVectors(ctx, memoryID, embedding, userID, scope); err != nil {
@@ -393,4 +402,117 @@ func (s *Service) Delete(ctx context.Context, memoryID string) error {
 	}
 
 	return nil
+}
+
+// RunSummarize fetches all memories for a user, generates a summary using Bedrock,
+// stores the summary as a new memory, and optionally deletes the originals.
+func (s *Service) RunSummarize(ctx context.Context, input SummarizeInput) (*SummarizeResult, error) {
+	if input.UserID == "" {
+		return nil, fmt.Errorf("user_id is required")
+	}
+
+	minCount := input.MinCount
+	if minCount <= 0 {
+		minCount = 3
+	}
+
+	// Collect all memories for the user via pagination.
+	var all []*Memory
+	var nextToken *string
+	for {
+		result, err := s.List(ctx, ListInput{
+			UserID:    input.UserID,
+			Limit:     100,
+			NextToken: nextToken,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("list memories for summarization: %w", err)
+		}
+		all = append(all, result.Memories...)
+		if result.NextToken == nil {
+			break
+		}
+		nextToken = result.NextToken
+	}
+
+	if len(all) < minCount {
+		return nil, fmt.Errorf("not enough memories to summarize: have %d, need at least %d", len(all), minCount)
+	}
+
+	// Generate the summary text.
+	summary, err := s.Summarize.Summarize(ctx, all)
+	if err != nil {
+		return nil, fmt.Errorf("generate summary: %w", err)
+	}
+
+	// Store the summary as a new memory.
+	addResult, err := s.Add(ctx, AddInput{
+		UserID:  input.UserID,
+		Content: summary,
+		Tags:    []string{"__summarized__"},
+		Scope:   ScopePrivate,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("store summary memory: %w", err)
+	}
+
+	// Optionally remove the original memories.
+	if input.DeleteOriginals {
+		for _, m := range all {
+			_ = s.Delete(ctx, m.MemoryID)
+		}
+	}
+
+	return &SummarizeResult{
+		SummarizedMemoryID: addResult.MemoryID,
+		MergedCount:        len(all),
+		Summary:            summary,
+	}, nil
+}
+
+// GenerateClaudeMD generates a CLAUDE.md-compatible markdown snippet from a user's memories.
+// The output is intended to be injected into a CLAUDE.md file so that Claude Code can
+// access user-specific context automatically.
+func (s *Service) GenerateClaudeMD(ctx context.Context, userID string) (string, error) {
+	if userID == "" {
+		return "", fmt.Errorf("user_id is required")
+	}
+
+	// Collect all memories for the user (up to 200 for readability).
+	result, err := s.List(ctx, ListInput{
+		UserID: userID,
+		Limit:  200,
+	})
+	if err != nil {
+		return "", fmt.Errorf("list memories: %w", err)
+	}
+
+	if len(result.Memories) == 0 {
+		return "", nil
+	}
+
+	md := "## Memory\n\n"
+	md += "以下はあなたの記憶です。作業の参考にしてください。\n\n"
+	for _, m := range result.Memories {
+		if len(m.Tags) > 0 {
+			md += fmt.Sprintf("- **[%s]** %s\n", joinTags(m.Tags), m.Content)
+		} else {
+			md += fmt.Sprintf("- %s\n", m.Content)
+		}
+	}
+	md += "\n"
+
+	return md, nil
+}
+
+// joinTags joins a string slice with ", ".
+func joinTags(tags []string) string {
+	result := ""
+	for i, t := range tags {
+		if i > 0 {
+			result += ", "
+		}
+		result += t
+	}
+	return result
 }

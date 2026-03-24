@@ -72,10 +72,11 @@ func writeError(w http.ResponseWriter, status int, msg string) {
 // handleAdd handles POST /api/v1/memories
 func (s *Server) handleAdd(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		UserID  string       `json:"user_id"`
-		Content string       `json:"content"`
-		Tags    []string     `json:"tags"`
-		Scope   memory.Scope `json:"scope"`
+		MemoryID string       `json:"memory_id"` // optional caller-supplied ID
+		UserID   string       `json:"user_id"`
+		Content  string       `json:"content"`
+		Tags     []string     `json:"tags"`
+		Scope    memory.Scope `json:"scope"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body: "+err.Error())
@@ -83,10 +84,11 @@ func (s *Server) handleAdd(w http.ResponseWriter, r *http.Request) {
 	}
 
 	result, err := s.svc.Add(r.Context(), memory.AddInput{
-		UserID:  resolveUserID(r, req.UserID),
-		Content: req.Content,
-		Tags:    req.Tags,
-		Scope:   req.Scope,
+		MemoryID: req.MemoryID,
+		UserID:   resolveUserID(r, req.UserID),
+		Content:  req.Content,
+		Tags:     req.Tags,
+		Scope:    req.Scope,
 	})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())

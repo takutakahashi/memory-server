@@ -82,6 +82,10 @@ func main() {
 	userSrv := api.NewUserServer(authStore)
 	userSrv.RegisterUserRoutes(mux, auth.AdminTokenAuth())
 
+	// CLAUDE.md injection and summarization routes (require ADMIN_TOKEN)
+	injectSrv := api.NewInjectServer(svc)
+	injectSrv.RegisterInjectRoutes(mux, auth.AdminTokenAuth())
+
 	// REST API memory routes — optionally protected by user Bearer tokens
 	apiSrv := api.New(svc)
 	if authEnabled {

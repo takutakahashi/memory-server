@@ -177,28 +177,84 @@ func (s *Store) Update(ctx context.Context, m *Memory) error {
 	if scope == "" {
 		scope = string(ScopePrivate)
 	}
+
+	// "scope" is a DynamoDB reserved keyword; use #scope alias via ExpressionAttributeNames.
+	updateExpr := "SET content = :c, tags = :t, updated_at = :ua, vector_id = :vi, #scope = :sc"
+	exprNames := map[string]string{"#scope": "scope"}
+	exprValues := map[string]types.AttributeValue{
+		":c":  &types.AttributeValueMemberS{Value: m.Content},
+		":t":  mustMarshalStringList(m.Tags),
+		":ua": &types.AttributeValueMemberS{Value: m.UpdatedAt.Format(time.RFC3339)},
+		":vi": &types.AttributeValueMemberS{Value: m.VectorID},
+		":sc": &types.AttributeValueMemberS{Value: scope},
+	}
+	// Conditionally update org_id: set when present, remove when cleared.
+	if m.OrgID != "" {
+		updateExpr += ", org_id = :oid"
+		exprValues[":oid"] = &types.AttributeValueMemberS{Value: m.OrgID}
+	} else {
+		updateExpr += " REMOVE org_id"
+	}
+
 	_, err := s.client.UpdateItem(ctx, &dynamodb.UpdateItemInput{
 		TableName: aws.String(s.tableName),
 		Key: map[string]types.AttributeValue{
 			"memory_id": &types.AttributeValueMemberS{Value: m.MemoryID},
 		},
-		// "scope" is a DynamoDB reserved keyword; use #scope alias via ExpressionAttributeNames.
-		UpdateExpression: aws.String("SET content = :c, tags = :t, updated_at = :ua, vector_id = :vi, #scope = :sc"),
-		ExpressionAttributeNames: map[string]string{
-			"#scope": "scope",
-		},
-		ExpressionAttributeValues: map[string]types.AttributeValue{
-			":c":  &types.AttributeValueMemberS{Value: m.Content},
-			":t":  mustMarshalStringList(m.Tags),
-			":ua": &types.AttributeValueMemberS{Value: m.UpdatedAt.Format(time.RFC3339)},
-			":vi": &types.AttributeValueMemberS{Value: m.VectorID},
-			":sc": &types.AttributeValueMemberS{Value: scope},
-		},
+		UpdateExpression:          aws.String(updateExpr),
+		ExpressionAttributeNames:  exprNames,
+		ExpressionAttributeValues: exprValues,
 	})
 	if err != nil {
 		return fmt.Errorf("update item: %w", err)
 	}
 	return nil
+}
+
+// ListByOrgID lists memories for an org using GSI "org_id-created_at-index", sorted by created_at descending.
+func (s *Store) ListByOrgID(ctx context.Context, orgID string, limit int, nextToken *string) ([]*Memory, *string, error) {
+	input := &dynamodb.QueryInput{
+		TableName:              aws.String(s.tableName),
+		IndexName:              aws.String("org_id-created_at-index"),
+		KeyConditionExpression: aws.String("org_id = :oid"),
+		ExpressionAttributeValues: map[string]types.AttributeValue{
+			":oid": &types.AttributeValueMemberS{Value: orgID},
+		},
+		ScanIndexForward: aws.Bool(false), // descending
+		Limit:            aws.Int32(int32(limit)),
+	}
+
+	if nextToken != nil && *nextToken != "" {
+		input.ExclusiveStartKey = map[string]types.AttributeValue{
+			"memory_id": &types.AttributeValueMemberS{Value: *nextToken},
+		}
+	}
+
+	result, err := s.client.Query(ctx, input)
+	if err != nil {
+		return nil, nil, fmt.Errorf("query org memories: %w", err)
+	}
+
+	memories := make([]*Memory, 0, len(result.Items))
+	for _, item := range result.Items {
+		var m Memory
+		if err := attributevalue.UnmarshalMap(item, &m); err != nil {
+			return nil, nil, fmt.Errorf("unmarshal memory: %w", err)
+		}
+		normalizeScope(&m)
+		memories = append(memories, &m)
+	}
+
+	var newNextToken *string
+	if result.LastEvaluatedKey != nil {
+		if v, ok := result.LastEvaluatedKey["memory_id"]; ok {
+			if sv, ok := v.(*types.AttributeValueMemberS); ok {
+				newNextToken = aws.String(sv.Value)
+			}
+		}
+	}
+
+	return memories, newNextToken, nil
 }
 
 // UpdateAccess updates last_accessed_at and access_count for a memory.

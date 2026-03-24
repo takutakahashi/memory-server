@@ -57,13 +57,15 @@ func NewServer(ctx context.Context) (*Server, error) {
 
 type AddMemoryInput struct {
 	UserID  string       `json:"user_id" jsonschema:"User ID"`
+	OrgID   string       `json:"org_id" jsonschema:"Org ID (required when scope is 'org')"`
 	Content string       `json:"content" jsonschema:"Content of the memory"`
 	Tags    []string     `json:"tags" jsonschema:"Tags for the memory"`
-	Scope   memory.Scope `json:"scope" jsonschema:"Visibility scope: 'private' (default, owner only) or 'public' (all users)"`
+	Scope   memory.Scope `json:"scope" jsonschema:"Visibility scope: 'private' (default, owner only), 'public' (all users), or 'org' (org members)"`
 }
 
 type SearchMemoriesInput struct {
 	UserID string   `json:"user_id" jsonschema:"User ID"`
+	OrgID  string   `json:"org_id" jsonschema:"Org ID to include org-scoped memories in search results"`
 	Query  string   `json:"query" jsonschema:"Natural language search query"`
 	Tags   []string `json:"tags" jsonschema:"Tags for OR-filtered search (max 5)"`
 	Limit  int      `json:"limit" jsonschema:"Number of results to return (default: 10)"`
@@ -71,6 +73,7 @@ type SearchMemoriesInput struct {
 
 type ListMemoriesInput struct {
 	UserID    string `json:"user_id" jsonschema:"User ID"`
+	OrgID     string `json:"org_id" jsonschema:"Org ID to list org-scoped memories"`
 	Limit     int    `json:"limit" jsonschema:"Number of results per page (default: 20)"`
 	NextToken string `json:"next_token" jsonschema:"Pagination token"`
 }
@@ -81,9 +84,10 @@ type GetMemoryInput struct {
 
 type UpdateMemoryInput struct {
 	MemoryID string       `json:"memory_id" jsonschema:"Memory ID"`
+	OrgID    string       `json:"org_id" jsonschema:"Org ID (required when scope is 'org')"`
 	Content  string       `json:"content" jsonschema:"New content"`
 	Tags     []string     `json:"tags" jsonschema:"New tags"`
-	Scope    memory.Scope `json:"scope" jsonschema:"New visibility scope: 'private' (owner only) or 'public' (all users)"`
+	Scope    memory.Scope `json:"scope" jsonschema:"New visibility scope: 'private' (owner only), 'public' (all users), or 'org' (org members)"`
 }
 
 type DeleteMemoryInput struct {
@@ -158,6 +162,7 @@ func (s *Server) Start(port string) error {
 func (s *Server) handleAddMemory(ctx context.Context, req *mcp.CallToolRequest, input AddMemoryInput) (*mcp.CallToolResult, any, error) {
 	result, err := s.svc.Add(ctx, memory.AddInput{
 		UserID:  input.UserID,
+		OrgID:   input.OrgID,
 		Content: input.Content,
 		Tags:    input.Tags,
 		Scope:   input.Scope,
@@ -175,6 +180,7 @@ func (s *Server) handleAddMemory(ctx context.Context, req *mcp.CallToolRequest, 
 func (s *Server) handleSearchMemories(ctx context.Context, req *mcp.CallToolRequest, input SearchMemoriesInput) (*mcp.CallToolResult, any, error) {
 	results, err := s.svc.Search(ctx, memory.SearchInput{
 		UserID: input.UserID,
+		OrgID:  input.OrgID,
 		Query:  input.Query,
 		Tags:   input.Tags,
 		Limit:  input.Limit,
@@ -207,6 +213,7 @@ func (s *Server) handleListMemories(ctx context.Context, req *mcp.CallToolReques
 
 	result, err := s.svc.List(ctx, memory.ListInput{
 		UserID:    input.UserID,
+		OrgID:     input.OrgID,
 		Limit:     input.Limit,
 		NextToken: nextToken,
 	})
@@ -238,6 +245,7 @@ func (s *Server) handleGetMemory(ctx context.Context, req *mcp.CallToolRequest, 
 func (s *Server) handleUpdateMemory(ctx context.Context, req *mcp.CallToolRequest, input UpdateMemoryInput) (*mcp.CallToolResult, any, error) {
 	m, err := s.svc.Update(ctx, memory.UpdateInput{
 		MemoryID: input.MemoryID,
+		OrgID:    input.OrgID,
 		Content:  input.Content,
 		Tags:     input.Tags,
 		Scope:    input.Scope,

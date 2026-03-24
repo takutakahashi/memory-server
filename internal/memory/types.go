@@ -10,12 +10,15 @@ const (
 	ScopePrivate Scope = "private"
 	// ScopePublic means all users can see the memory.
 	ScopePublic Scope = "public"
+	// ScopeOrg means all members of the org (identified by org_id) can see the memory.
+	ScopeOrg Scope = "org"
 )
 
 // Memory represents a single memory entry.
 type Memory struct {
 	MemoryID       string    `json:"memory_id" dynamodbav:"memory_id"`
 	UserID         string    `json:"user_id" dynamodbav:"user_id"`
+	OrgID          string    `json:"org_id,omitempty" dynamodbav:"org_id,omitempty"`
 	Scope          Scope     `json:"scope" dynamodbav:"scope"`
 	Content        string    `json:"content" dynamodbav:"content"`
 	Tags           []string  `json:"tags" dynamodbav:"tags"`

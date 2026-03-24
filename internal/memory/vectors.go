@@ -103,26 +103,49 @@ type deleteVectorsRequest struct {
 }
 
 // PutVectors stores a vector in S3 Vectors.
-func (c *S3VectorsClient) PutVectors(ctx context.Context, key string, embedding []float64, userID string, scope Scope) error {
+// orgID is optional; when non-empty it is stored as metadata so that org-scoped queries can filter by it.
+func (c *S3VectorsClient) PutVectors(ctx context.Context, key string, embedding []float64, userID string, scope Scope, orgID string) error {
 	if scope == "" {
 		scope = ScopePrivate
+	}
+	metadata := map[string]interface{}{
+		"user_id": userID,
+		"scope":   string(scope),
+	}
+	if orgID != "" {
+		metadata["org_id"] = orgID
 	}
 	reqBody := putVectorsRequest{
 		VectorBucketName: c.bucketName,
 		IndexName:        c.indexName,
 		Vectors: []vectorItem{
 			{
-				Key:  key,
-				Data: vectorData{Float32: embedding},
-				Metadata: map[string]interface{}{
-					"user_id": userID,
-					"scope":   string(scope),
-				},
+				Key:      key,
+				Data:     vectorData{Float32: embedding},
+				Metadata: metadata,
 			},
 		},
 	}
 
 	return c.doRequest(ctx, "/PutVectors", reqBody, nil)
+}
+
+// QueryVectorsOrg performs a similarity search for org-scoped vectors filtered by org_id.
+func (c *S3VectorsClient) QueryVectorsOrg(ctx context.Context, embedding []float64, topK int, orgID string) ([]*VectorResult, error) {
+	reqBody := queryVectorsRequest{
+		VectorBucketName: c.bucketName,
+		IndexName:        c.indexName,
+		TopK:             topK,
+		QueryVector:      vectorData{Float32: embedding},
+		ReturnMetadata:   true,
+		Filter: map[string]interface{}{
+			"org_id": map[string]interface{}{
+				"$eq": orgID,
+			},
+		},
+	}
+
+	return c.doQueryVectors(ctx, reqBody)
 }
 
 // QueryVectors performs a similarity search in S3 Vectors filtered by user_id.

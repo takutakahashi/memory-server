@@ -4,7 +4,9 @@ import (
 	"context"
 	"os"
 
+	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
+	"github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
 )
 
 // Migration represents a single, versioned schema change.
@@ -47,6 +49,11 @@ var allMigrations = []Migration{
 		Description: "create users table with GSI token-index",
 		Up:          migration003CreateUsers,
 	},
+	{
+		Version:     4,
+		Description: "add GSI org_id-created_at-index to memories table for org-scoped queries",
+		Up:          migration004AddOrgGSI,
+	},
 }
 
 // ---------------------------------------------------------------------------
@@ -73,4 +80,23 @@ func migration003CreateUsers(ctx context.Context, client *dynamodb.Client) error
 		tableName = "users"
 	}
 	return ensureTable(ctx, client, usersTableDef(tableName))
+}
+
+func migration004AddOrgGSI(ctx context.Context, client *dynamodb.Client) error {
+	tableName := os.Getenv("DYNAMODB_TABLE_NAME")
+	if tableName == "" {
+		tableName = "memories"
+	}
+	return addGSIToTable(ctx, client, tableName, "org_id-created_at-index",
+		[]types.KeySchemaElement{
+			{AttributeName: aws.String("org_id"), KeyType: types.KeyTypeHash},
+			{AttributeName: aws.String("created_at"), KeyType: types.KeyTypeRange},
+		},
+		[]types.AttributeDefinition{
+			{AttributeName: aws.String("org_id"), AttributeType: types.ScalarAttributeTypeS},
+			// created_at is already defined in the table from migration 1
+		},
+		&types.Projection{ProjectionType: types.ProjectionTypeAll},
+		&types.ProvisionedThroughput{ReadCapacityUnits: aws.Int64(5), WriteCapacityUnits: aws.Int64(5)},
+	)
 }

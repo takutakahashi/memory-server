@@ -73,6 +73,7 @@ func writeError(w http.ResponseWriter, status int, msg string) {
 func (s *Server) handleAdd(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		UserID  string       `json:"user_id"`
+		OrgID   string       `json:"org_id"`
 		Content string       `json:"content"`
 		Tags    []string     `json:"tags"`
 		Scope   memory.Scope `json:"scope"`
@@ -84,6 +85,7 @@ func (s *Server) handleAdd(w http.ResponseWriter, r *http.Request) {
 
 	result, err := s.svc.Add(r.Context(), memory.AddInput{
 		UserID:  resolveUserID(r, req.UserID),
+		OrgID:   req.OrgID,
 		Content: req.Content,
 		Tags:    req.Tags,
 		Scope:   req.Scope,
@@ -100,6 +102,7 @@ func (s *Server) handleAdd(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleList(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	userID := resolveUserID(r, q.Get("user_id"))
+	orgID := q.Get("org_id")
 	limitStr := q.Get("limit")
 	nextTokenStr := q.Get("next_token")
 
@@ -120,6 +123,7 @@ func (s *Server) handleList(w http.ResponseWriter, r *http.Request) {
 
 	result, err := s.svc.List(r.Context(), memory.ListInput{
 		UserID:    userID,
+		OrgID:     orgID,
 		Limit:     limit,
 		NextToken: nextToken,
 	})
@@ -135,6 +139,7 @@ func (s *Server) handleList(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		UserID string   `json:"user_id"`
+		OrgID  string   `json:"org_id"`
 		Query  string   `json:"query"`
 		Tags   []string `json:"tags"`
 		Limit  int      `json:"limit"`
@@ -146,6 +151,7 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 
 	results, err := s.svc.Search(r.Context(), memory.SearchInput{
 		UserID: resolveUserID(r, req.UserID),
+		OrgID:  req.OrgID,
 		Query:  req.Query,
 		Tags:   req.Tags,
 		Limit:  req.Limit,
@@ -191,6 +197,7 @@ func (s *Server) handleUpdate(w http.ResponseWriter, r *http.Request) {
 		Content string       `json:"content"`
 		Tags    []string     `json:"tags"`
 		Scope   memory.Scope `json:"scope"`
+		OrgID   string       `json:"org_id"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body: "+err.Error())
@@ -202,6 +209,7 @@ func (s *Server) handleUpdate(w http.ResponseWriter, r *http.Request) {
 		Content:  req.Content,
 		Tags:     req.Tags,
 		Scope:    req.Scope,
+		OrgID:    req.OrgID,
 	})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())

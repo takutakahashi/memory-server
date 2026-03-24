@@ -32,6 +32,7 @@ func NewService(cfg aws.Config) *Service {
 // AddInput holds input parameters for Add.
 type AddInput struct {
 	UserID  string
+	OrgID   string // required when Scope == ScopeOrg
 	Content string
 	Tags    []string
 	Scope   Scope
@@ -55,8 +56,11 @@ func (s *Service) Add(ctx context.Context, input AddInput) (*AddResult, error) {
 	if scope == "" {
 		scope = ScopePrivate
 	}
-	if scope != ScopePrivate && scope != ScopePublic {
-		return nil, fmt.Errorf("invalid scope: %q (must be %q or %q)", scope, ScopePrivate, ScopePublic)
+	if scope != ScopePrivate && scope != ScopePublic && scope != ScopeOrg {
+		return nil, fmt.Errorf("invalid scope: %q (must be %q, %q, or %q)", scope, ScopePrivate, ScopePublic, ScopeOrg)
+	}
+	if scope == ScopeOrg && input.OrgID == "" {
+		return nil, fmt.Errorf("org_id is required when scope is %q", ScopeOrg)
 	}
 
 	embedding, err := s.Embedding.Generate(ctx, input.Content)
@@ -67,13 +71,14 @@ func (s *Service) Add(ctx context.Context, input AddInput) (*AddResult, error) {
 	memoryID := uuid.New().String()
 	now := time.Now().UTC()
 
-	if err := s.Vectors.PutVectors(ctx, memoryID, embedding, userID, scope); err != nil {
+	if err := s.Vectors.PutVectors(ctx, memoryID, embedding, userID, scope, input.OrgID); err != nil {
 		return nil, fmt.Errorf("put vectors: %w", err)
 	}
 
 	m := &Memory{
 		MemoryID:       memoryID,
 		UserID:         userID,
+		OrgID:          input.OrgID,
 		Scope:          scope,
 		Content:        input.Content,
 		Tags:           input.Tags,
@@ -93,6 +98,7 @@ func (s *Service) Add(ctx context.Context, input AddInput) (*AddResult, error) {
 // SearchInput holds input parameters for Search.
 type SearchInput struct {
 	UserID string
+	OrgID  string // when set, org-scoped memories for this org are included in results
 	Query  string
 	Tags   []string
 	Limit  int
@@ -194,6 +200,14 @@ func (s *Service) Search(ctx context.Context, input SearchInput) ([]*SearchResul
 		}
 
 		vectorResults = mergeVectorResults(ownResults, publicResults)
+
+		// Also query org-scoped memories when an org_id is provided.
+		if input.OrgID != "" {
+			orgResults, qErr := s.Vectors.QueryVectorsOrg(ctx, embedding, 50, input.OrgID)
+			if qErr == nil {
+				vectorResults = mergeVectorResults(vectorResults, orgResults)
+			}
+		}
 	}
 
 	if len(vectorResults) == 0 {
@@ -218,9 +232,11 @@ func (s *Service) Search(ctx context.Context, input SearchInput) ([]*SearchResul
 	}
 	var scored []scoredMemory
 	for _, m := range memories {
-		// Include if: own memory (any scope) OR public memory from another user.
+		// Include if: own memory (any scope) OR public memory OR org-scoped memory matching requested org.
 		if m.UserID != userID && m.Scope != ScopePublic {
-			continue
+			if m.Scope != ScopeOrg || m.OrgID != input.OrgID {
+				continue
+			}
 		}
 		simScore := vectorScoreMap[m.MemoryID]
 		finalScore := s.Scorer.Score(simScore, m)
@@ -257,6 +273,7 @@ func (s *Service) Search(ctx context.Context, input SearchInput) ([]*SearchResul
 // ListInput holds input parameters for List.
 type ListInput struct {
 	UserID    string
+	OrgID     string // when set, list org-scoped memories instead of user memories
 	Limit     int
 	NextToken *string
 }
@@ -267,20 +284,31 @@ type ListResult struct {
 	NextToken *string   `json:"next_token,omitempty"`
 }
 
-// List returns memories for a user with optional pagination.
+// List returns memories for a user or org with optional pagination.
 func (s *Service) List(ctx context.Context, input ListInput) (*ListResult, error) {
-	userID := input.UserID
-	if userID == "" {
-		userID = "default"
-	}
 	limit := input.Limit
 	if limit == 0 {
 		limit = 20
 	}
 
-	memories, newNextToken, err := s.Store.ListByUserID(ctx, userID, limit, input.NextToken)
-	if err != nil {
-		return nil, fmt.Errorf("list memories: %w", err)
+	var memories []*Memory
+	var newNextToken *string
+	var err error
+
+	if input.OrgID != "" {
+		memories, newNextToken, err = s.Store.ListByOrgID(ctx, input.OrgID, limit, input.NextToken)
+		if err != nil {
+			return nil, fmt.Errorf("list org memories: %w", err)
+		}
+	} else {
+		userID := input.UserID
+		if userID == "" {
+			userID = "default"
+		}
+		memories, newNextToken, err = s.Store.ListByUserID(ctx, userID, limit, input.NextToken)
+		if err != nil {
+			return nil, fmt.Errorf("list memories: %w", err)
+		}
 	}
 
 	return &ListResult{
@@ -310,6 +338,7 @@ func (s *Service) Get(ctx context.Context, memoryID string) (*Memory, error) {
 // UpdateInput holds input parameters for Update.
 type UpdateInput struct {
 	MemoryID string
+	OrgID    string // required when changing scope to ScopeOrg; cleared when scope changes away from ScopeOrg
 	Content  string
 	Tags     []string
 	Scope    Scope
@@ -321,8 +350,8 @@ func (s *Service) Update(ctx context.Context, input UpdateInput) (*Memory, error
 		return nil, fmt.Errorf("memory_id is required")
 	}
 
-	if input.Scope != "" && input.Scope != ScopePrivate && input.Scope != ScopePublic {
-		return nil, fmt.Errorf("invalid scope: %q (must be %q or %q)", input.Scope, ScopePrivate, ScopePublic)
+	if input.Scope != "" && input.Scope != ScopePrivate && input.Scope != ScopePublic && input.Scope != ScopeOrg {
+		return nil, fmt.Errorf("invalid scope: %q (must be %q, %q, or %q)", input.Scope, ScopePrivate, ScopePublic, ScopeOrg)
 	}
 
 	m, err := s.Store.Get(ctx, input.MemoryID)
@@ -339,11 +368,25 @@ func (s *Service) Update(ctx context.Context, input UpdateInput) (*Memory, error
 		newScope = ScopePrivate
 	}
 
+	// Resolve effective org_id.
+	newOrgID := m.OrgID
+	if input.OrgID != "" {
+		newOrgID = input.OrgID
+	}
+	// Clear org_id when scope is not org.
+	if newScope != ScopeOrg {
+		newOrgID = ""
+	}
+	if newScope == ScopeOrg && newOrgID == "" {
+		return nil, fmt.Errorf("org_id is required when scope is %q", ScopeOrg)
+	}
+
 	contentChanged := input.Content != "" && input.Content != m.Content
 	scopeChanged := newScope != m.Scope
+	orgChanged := newOrgID != m.OrgID
 
-	if contentChanged || scopeChanged {
-		// Re-embed if content changed; reuse existing embedding if only scope changed.
+	if contentChanged || scopeChanged || orgChanged {
+		// Re-embed if content changed; reuse existing embedding if only scope/org changed.
 		var embedding []float64
 		if contentChanged {
 			var embErr error
@@ -361,7 +404,7 @@ func (s *Service) Update(ctx context.Context, input UpdateInput) (*Memory, error
 			}
 		}
 		_ = s.Vectors.DeleteVectors(ctx, []string{m.VectorID})
-		if putErr := s.Vectors.PutVectors(ctx, input.MemoryID, embedding, m.UserID, newScope); putErr != nil {
+		if putErr := s.Vectors.PutVectors(ctx, input.MemoryID, embedding, m.UserID, newScope, newOrgID); putErr != nil {
 			return nil, fmt.Errorf("put vectors: %w", putErr)
 		}
 		m.VectorID = input.MemoryID
@@ -371,6 +414,7 @@ func (s *Service) Update(ctx context.Context, input UpdateInput) (*Memory, error
 		m.Tags = input.Tags
 	}
 	m.Scope = newScope
+	m.OrgID = newOrgID
 	m.UpdatedAt = time.Now().UTC()
 
 	if err := s.Store.Update(ctx, m); err != nil {

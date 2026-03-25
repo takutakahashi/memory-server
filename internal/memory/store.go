@@ -182,7 +182,11 @@ func (s *Store) Update(ctx context.Context, m *Memory) error {
 		Key: map[string]types.AttributeValue{
 			"memory_id": &types.AttributeValueMemberS{Value: m.MemoryID},
 		},
-		UpdateExpression: aws.String("SET content = :c, tags = :t, updated_at = :ua, vector_id = :vi, scope = :sc"),
+		// "scope" is a DynamoDB reserved keyword; use #scope alias via ExpressionAttributeNames.
+		UpdateExpression: aws.String("SET content = :c, tags = :t, updated_at = :ua, vector_id = :vi, #scope = :sc"),
+		ExpressionAttributeNames: map[string]string{
+			"#scope": "scope",
+		},
 		ExpressionAttributeValues: map[string]types.AttributeValue{
 			":c":  &types.AttributeValueMemberS{Value: m.Content},
 			":t":  mustMarshalStringList(m.Tags),

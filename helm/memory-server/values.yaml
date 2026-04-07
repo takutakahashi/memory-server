@@ -94,3 +94,69 @@ auth:
   adminToken: ""
   # Set to true to require Bearer tokens on all memory endpoints.
   authEnabled: false
+
+# Frontend (社内 Wiki ポータル) configuration
+frontend:
+  enabled: true
+
+  replicaCount: 1
+
+  image:
+    repository: ghcr.io/takutakahashi/memory-server-frontend
+    pullPolicy: IfNotPresent
+    tag: ""  # defaults to .Chart.AppVersion
+
+  # URL of the memory-server backend API (seen from the browser)
+  apiBaseUrl: ""
+
+  # Default user_id passed to the KB API
+  defaultUserId: "default"
+
+  # Name of an existing Secret that contains the API Bearer token.
+  # The secret must have a key matching apiTokenSecretKey (default: "api-token").
+  apiTokenSecretName: ""
+  apiTokenSecretKey: "api-token"
+
+  podAnnotations: {}
+  podSecurityContext: {}
+  securityContext:
+    allowPrivilegeEscalation: false
+    runAsNonRoot: true
+    runAsUser: 1001
+    capabilities:
+      drop:
+        - ALL
+
+  service:
+    type: ClusterIP
+    port: 3000
+
+  ingress:
+    enabled: true
+    className: "nginx"
+    annotations:
+      cert-manager.io/cluster-issuer: "letsencrypt"
+    hosts:
+      - host: ""  # Set your domain here, e.g. wiki.example.com
+        paths:
+          - path: /
+            pathType: Prefix
+    tls: []  # e.g. [{secretName: my-tls, hosts: [wiki.example.com]}]
+
+  podSecurityContext:
+    runAsNonRoot: true
+    fsGroup: 1001
+
+  resources:
+    limits:
+      cpu: 500m
+      memory: 512Mi
+    requests:
+      cpu: 100m
+      memory: 256Mi
+
+  autoscaling:
+    enabled: false
+    minReplicas: 1
+    maxReplicas: 3
+    targetCPUUtilizationPercentage: 80

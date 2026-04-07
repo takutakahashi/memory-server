@@ -1,0 +1,31 @@
+@import "tailwindcss";
+@plugin "@tailwindcss/typography";
+
+:root {
+  --background: #f8fafc;
+  --foreground: #0f172a;
+}
+
+body {
+  background: var(--background);
+  color: var(--foreground);
+}
+
+/* Override typography plugin defaults for code/pre blocks */
+.prose :where(code):not(:where([class~="not-prose"] *)) {
+  color: #7c3aed;
+  font-family: 'Fira Code', 'Cascadia Code', 'Consolas', monospace;
+}
+.prose :where(pre):not(:where([class~="not-prose"] *)) {
+  background: #1e293b;
+  color: #e2e8f0;
+}
+.prose :where(blockquote):not(:where([class~="not-prose"] *)) {
+  border-left-color: #6366f1;
+}
+.prose :where(a):not(:where([class~="not-prose"] *)) {
+  color: #6366f1;
+}
+.prose :where(a):not(:where([class~="not-prose"] *)):hover {
+  color: #4f46e5;
+}

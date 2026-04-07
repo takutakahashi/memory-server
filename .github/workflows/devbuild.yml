@@ -1,0 +1,240 @@
+name: Dev Build
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: 'Branch / tag / SHA to build from'
+        required: false
+        default: ''
+      build_backend:
+        description: 'Build backend image'
+        type: boolean
+        default: true
+      build_frontend:
+        description: 'Build frontend image'
+        type: boolean
+        default: true
+      push_chart:
+        description: 'Package and push Helm chart'
+        type: boolean
+        default: true
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+  CHART_NAME: memory-server
+
+jobs:
+  # ─────────────────────────────────────────
+  # Determine the ref to build from
+  # ─────────────────────────────────────────
+  setup:
+    runs-on: ubuntu-latest
+    outputs:
+      ref: ${{ steps.resolve.outputs.ref }}
+      short_sha: ${{ steps.resolve.outputs.short_sha }}
+      image_tag: ${{ steps.resolve.outputs.image_tag }}
+      chart_version: ${{ steps.resolve.outputs.chart_version }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref || github.ref }}
+          fetch-depth: 0
+
+      - name: Resolve build metadata
+        id: resolve
+        run: |
+          REF="${{ inputs.ref || github.ref_name }}"
+          SHORT_SHA=$(git rev-parse --short HEAD)
+          # Sanitize ref for use as a Docker tag (replace / with -)
+          IMAGE_TAG=$(echo "${REF}" | sed 's|/|-|g')-${SHORT_SHA}
+          # Derive chart version: use Chart.yaml version + short SHA as pre-release
+          BASE_VERSION=$(grep '^version:' helm/memory-server/Chart.yaml | awk '{print $2}')
+          CHART_VERSION="${BASE_VERSION}-dev.${SHORT_SHA}"
+
+          echo "ref=${REF}"           >> $GITHUB_OUTPUT
+          echo "short_sha=${SHORT_SHA}" >> $GITHUB_OUTPUT
+          echo "image_tag=${IMAGE_TAG}" >> $GITHUB_OUTPUT
+          echo "chart_version=${CHART_VERSION}" >> $GITHUB_OUTPUT
+
+          echo "### Dev Build Info" >> $GITHUB_STEP_SUMMARY
+          echo "| Key | Value |" >> $GITHUB_STEP_SUMMARY
+          echo "|-----|-------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Ref | \`${REF}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| SHA | \`${SHORT_SHA}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| Image tag | \`${IMAGE_TAG}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| Chart version | \`${CHART_VERSION}\` |" >> $GITHUB_STEP_SUMMARY
+
+  # ─────────────────────────────────────────
+  # Backend image
+  # ─────────────────────────────────────────
+  build-backend:
+    needs: setup
+    if: ${{ inputs.build_backend }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref || github.ref }}
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push backend image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: |
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ needs.setup.outputs.image_tag }}
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:dev
+          labels: |
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.revision=${{ needs.setup.outputs.short_sha }}
+            org.opencontainers.image.ref.name=${{ needs.setup.outputs.ref }}
+          cache-from: type=gha,scope=backend
+          cache-to: type=gha,mode=max,scope=backend
+
+      - name: Summary
+        run: |
+          echo "### Backend Image" >> $GITHUB_STEP_SUMMARY
+          echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+          echo "${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ needs.setup.outputs.image_tag }}" >> $GITHUB_STEP_SUMMARY
+          echo "${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:dev" >> $GITHUB_STEP_SUMMARY
+          echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+
+  # ─────────────────────────────────────────
+  # Frontend image
+  # ─────────────────────────────────────────
+  build-frontend:
+    needs: setup
+    if: ${{ inputs.build_frontend }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref || github.ref }}
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push frontend image
+        uses: docker/build-push-action@v6
+        with:
+          context: ./frontend
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: |
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}-frontend:${{ needs.setup.outputs.image_tag }}
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}-frontend:dev
+          labels: |
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.revision=${{ needs.setup.outputs.short_sha }}
+            org.opencontainers.image.ref.name=${{ needs.setup.outputs.ref }}
+          cache-from: type=gha,scope=frontend
+          cache-to: type=gha,mode=max,scope=frontend
+
+      - name: Summary
+        run: |
+          echo "### Frontend Image" >> $GITHUB_STEP_SUMMARY
+          echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+          echo "${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}-frontend:${{ needs.setup.outputs.image_tag }}" >> $GITHUB_STEP_SUMMARY
+          echo "${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}-frontend:dev" >> $GITHUB_STEP_SUMMARY
+          echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+
+  # ─────────────────────────────────────────
+  # Helm chart (depends on both images)
+  # ─────────────────────────────────────────
+  push-chart:
+    needs: [setup, build-backend, build-frontend]
+    if: |
+      always() &&
+      inputs.push_chart &&
+      !contains(needs.*.result, 'failure') &&
+      !contains(needs.*.result, 'cancelled')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref || github.ref }}
+
+      - name: Set up Helm
+        uses: azure/setup-helm@v4
+        with:
+          version: v3.14.0
+
+      - name: Log in to GHCR (Helm)
+        run: echo "${{ secrets.GITHUB_TOKEN }}" | helm registry login ${{ env.REGISTRY }} --username ${{ github.actor }} --password-stdin
+
+      - name: Stamp chart version and appVersion
+        run: |
+          VERSION="${{ needs.setup.outputs.chart_version }}"
+          IMAGE_TAG="${{ needs.setup.outputs.image_tag }}"
+          sed -i "s/^version:.*/version: ${VERSION}/" helm/memory-server/Chart.yaml
+          sed -i "s/^appVersion:.*/appVersion: \"${IMAGE_TAG}\"/" helm/memory-server/Chart.yaml
+          echo "Chart.yaml after stamp:"
+          head -6 helm/memory-server/Chart.yaml
+
+      - name: Helm lint
+        run: helm lint helm/memory-server/
+
+      - name: Package chart
+        run: helm package helm/memory-server/
+
+      - name: Push chart to GHCR
+        run: |
+          OWNER=$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')
+          helm push ${{ env.CHART_NAME }}-*.tgz oci://${{ env.REGISTRY }}/${OWNER}/charts
+
+      - name: Summary
+        run: |
+          OWNER=$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')
+          VERSION="${{ needs.setup.outputs.chart_version }}"
+          echo "### Helm Chart" >> $GITHUB_STEP_SUMMARY
+          echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+          echo "oci://${{ env.REGISTRY }}/${OWNER}/charts/${{ env.CHART_NAME }}:${VERSION}" >> $GITHUB_STEP_SUMMARY
+          echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "Install dev build:" >> $GITHUB_STEP_SUMMARY
+          echo "\`\`\`bash" >> $GITHUB_STEP_SUMMARY
+          echo "helm upgrade --install memory-server \\" >> $GITHUB_STEP_SUMMARY
+          echo "  oci://${{ env.REGISTRY }}/${OWNER}/charts/${{ env.CHART_NAME }} \\" >> $GITHUB_STEP_SUMMARY
+          echo "  --version ${VERSION} \\" >> $GITHUB_STEP_SUMMARY
+          echo "  --set image.tag=${{ needs.setup.outputs.image_tag }} \\" >> $GITHUB_STEP_SUMMARY
+          echo "  --set frontend.image.tag=${{ needs.setup.outputs.image_tag }}" >> $GITHUB_STEP_SUMMARY
+          echo "\`\`\`" >> $GITHUB_STEP_SUMMARY

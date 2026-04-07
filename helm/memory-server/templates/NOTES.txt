@@ -23,3 +23,23 @@ Memory MCP Server has been deployed!
      - DynamoDB table: {{ .Values.dynamodb.tableName }}
      - S3 Vectors bucket: {{ .Values.s3vectors.bucketName }}
      - S3 Vectors index: {{ .Values.s3vectors.indexName }}
+
+{{- if .Values.frontend.enabled }}
+
+3. Wiki Frontend:
+{{- if .Values.frontend.ingress.enabled }}
+{{- range $host := .Values.frontend.ingress.hosts }}
+  http{{ if $.Values.frontend.ingress.tls }}s{{ end }}://{{ $host.host }}
+{{- end }}
+{{- else }}
+  kubectl --namespace {{ .Release.Namespace }} port-forward svc/{{ include "memory-server.fullname" . }}-frontend 3000:{{ .Values.frontend.service.port }}
+  echo "Visit http://127.0.0.1:3000 to access the Wiki frontend"
+{{- end }}
+
+{{- if not .Values.frontend.apiBaseUrl }}
+  ⚠️  WARNING: frontend.apiBaseUrl is not set.
+     The frontend will default to http://localhost:8080 and API calls will fail in-cluster.
+     Set frontend.apiBaseUrl to the in-cluster backend service URL, e.g.:
+       --set frontend.apiBaseUrl=http://{{ include "memory-server.fullname" . }}:8080
+{{- end }}
+{{- end }}

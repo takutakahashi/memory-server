@@ -42,7 +42,7 @@ spec:
               protocol: TCP
           livenessProbe:
             httpGet:
-              path: /
+              path: /api/health
               port: http
             initialDelaySeconds: 15
             periodSeconds: 30
@@ -50,11 +50,12 @@ spec:
             failureThreshold: 3
           readinessProbe:
             httpGet:
-              path: /
+              path: /api/health
               port: http
             initialDelaySeconds: 5
             periodSeconds: 10
             timeoutSeconds: 5
+            failureThreshold: 3
           env:
             - name: NODE_ENV
               value: "production"
@@ -69,7 +70,7 @@ spec:
               value: {{ .Values.frontend.defaultUserId | quote }}
             {{- end }}
             {{- if .Values.frontend.apiTokenSecretName }}
-            - name: NEXT_PUBLIC_API_TOKEN
+            - name: API_TOKEN
               valueFrom:
                 secretKeyRef:
                   name: {{ .Values.frontend.apiTokenSecretName }}

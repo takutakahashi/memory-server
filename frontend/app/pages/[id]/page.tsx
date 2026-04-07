@@ -1,4 +1,4 @@
-import { getPage } from '@/lib/api';
+import { getPage, ApiError } from '@/lib/api';
 import MarkdownContent from '@/components/MarkdownContent';
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
@@ -28,15 +28,15 @@ export default async function PageDetailPage({ params }: PageDetailProps) {
   try {
     page = await getPage(id);
   } catch (e) {
-    const msg = e instanceof Error ? e.message : '';
-    if (msg.includes('404') || msg.toLowerCase().includes('not found')) {
+    if (e instanceof ApiError && e.status === 404) {
       notFound();
     }
+    const msg = e instanceof Error ? e.message : '記事の取得に失敗しました';
     return (
       <div className="mx-auto max-w-4xl px-4 sm:px-6 py-10">
         <div className="rounded-xl border border-red-200 bg-red-50 p-6 text-red-700">
           <p className="font-medium">エラーが発生しました</p>
-          <p className="text-sm mt-1">{msg || '記事の取得に失敗しました'}</p>
+          <p className="text-sm mt-1">{msg}</p>
         </div>
       </div>
     );

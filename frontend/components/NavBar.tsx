@@ -1,10 +1,10 @@
 'use client';
 
 import Link from 'next/link';
-import { useRouter, useSearchParams } from 'next/navigation';
-import { useState, Suspense } from 'react';
+import { useRouter, useSearchParams, usePathname } from 'next/navigation';
+import { useState, Suspense, useEffect } from 'react';
 
-function SearchInput() {
+function SearchInput({ onSearch }: { onSearch?: () => void }) {
   const router = useRouter();
   const searchParams = useSearchParams();
   const [q, setQ] = useState(searchParams.get('q') || '');
@@ -13,6 +13,7 @@ function SearchInput() {
     e.preventDefault();
     if (q.trim()) {
       router.push(`/search?q=${encodeURIComponent(q.trim())}`);
+      onSearch?.();
     }
   }
 
@@ -40,6 +41,12 @@ function SearchInput() {
 
 export default function NavBar() {
   const [mobileOpen, setMobileOpen] = useState(false);
+  const pathname = usePathname();
+
+  // Close mobile menu whenever the route changes
+  useEffect(() => {
+    setMobileOpen(false);
+  }, [pathname]);
 
   return (
     <header className="sticky top-0 z-50 border-b border-slate-200 bg-white shadow-sm">
@@ -68,8 +75,9 @@ export default function NavBar() {
         {/* Mobile menu button */}
         <button
           className="md:hidden text-slate-600"
-          onClick={() => setMobileOpen(!mobileOpen)}
+          onClick={() => setMobileOpen((v) => !v)}
           aria-label="メニュー"
+          aria-expanded={mobileOpen}
         >
           <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d={mobileOpen ? 'M6 18L18 6M6 6l12 12' : 'M4 6h16M4 12h16M4 18h16'} />
@@ -81,11 +89,11 @@ export default function NavBar() {
       {mobileOpen && (
         <div className="md:hidden border-t border-slate-100 bg-white px-4 pb-4 pt-2 space-y-3">
           <nav className="flex flex-col gap-2 text-sm font-medium text-slate-600">
-            <Link href="/" onClick={() => setMobileOpen(false)} className="hover:text-indigo-600">ホーム</Link>
-            <Link href="/pages" onClick={() => setMobileOpen(false)} className="hover:text-indigo-600">記事一覧</Link>
+            <Link href="/" className="hover:text-indigo-600">ホーム</Link>
+            <Link href="/pages" className="hover:text-indigo-600">記事一覧</Link>
           </nav>
           <Suspense fallback={null}>
-            <SearchInput />
+            <SearchInput onSearch={() => setMobileOpen(false)} />
           </Suspense>
         </div>
       )}

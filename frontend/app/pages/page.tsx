@@ -1,6 +1,7 @@
 import { listPages, KBPage } from '@/lib/api';
 import PageCard from '@/components/PageCard';
 import CategoryFilter from '@/components/CategoryFilter';
+import Link from 'next/link';
 import { Suspense } from 'react';
 
 interface PageListProps {
@@ -55,12 +56,12 @@ async function PageListContent({ category, nextToken }: { category?: string; nex
       </div>
       {nextNextToken && (
         <div className="mt-8 text-center">
-          <a
+          <Link
             href={`/pages?${category ? `category=${encodeURIComponent(category)}&` : ''}next_token=${encodeURIComponent(nextNextToken)}`}
             className="inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-6 py-2.5 text-sm font-medium text-slate-700 shadow-sm hover:border-indigo-300 hover:text-indigo-600 transition-colors"
           >
             もっと見る
-          </a>
+          </Link>
         </div>
       )}
     </>

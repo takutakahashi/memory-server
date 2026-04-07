@@ -69,11 +69,11 @@ spec:
             - name: NEXT_PUBLIC_DEFAULT_USER_ID
               value: {{ .Values.frontend.defaultUserId | quote }}
             {{- end }}
-            {{- if .Values.frontend.apiTokenSecretName }}
+            {{- if or .Values.frontend.apiTokenSecretName .Values.frontend.apiToken }}
             - name: API_TOKEN
               valueFrom:
                 secretKeyRef:
-                  name: {{ .Values.frontend.apiTokenSecretName }}
+                  name: {{ .Values.frontend.apiTokenSecretName | default (printf "%s-frontend-token" (include "memory-server.fullname" .)) }}
                   key: {{ .Values.frontend.apiTokenSecretKey | default "api-token" }}
                   optional: true
             {{- end }}

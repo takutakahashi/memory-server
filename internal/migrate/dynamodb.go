@@ -129,6 +129,99 @@ func memoriesTableDef(tableName string) tableDefinition {
 	}
 }
 
+func inboxTableDef(tableName string) tableDefinition {
+	return tableDefinition{
+		input: &dynamodb.CreateTableInput{
+			TableName: aws.String(tableName),
+			AttributeDefinitions: []types.AttributeDefinition{
+				{AttributeName: aws.String("inbox_id"), AttributeType: types.ScalarAttributeTypeS},
+				{AttributeName: aws.String("user_id"), AttributeType: types.ScalarAttributeTypeS},
+				{AttributeName: aws.String("created_at"), AttributeType: types.ScalarAttributeTypeS},
+				{AttributeName: aws.String("status"), AttributeType: types.ScalarAttributeTypeS},
+			},
+			KeySchema: []types.KeySchemaElement{
+				{AttributeName: aws.String("inbox_id"), KeyType: types.KeyTypeHash},
+			},
+			GlobalSecondaryIndexes: []types.GlobalSecondaryIndex{
+				{
+					IndexName: aws.String("user_id-created_at-index"),
+					KeySchema: []types.KeySchemaElement{
+						{AttributeName: aws.String("user_id"), KeyType: types.KeyTypeHash},
+						{AttributeName: aws.String("created_at"), KeyType: types.KeyTypeRange},
+					},
+					Projection: &types.Projection{ProjectionType: types.ProjectionTypeAll},
+					ProvisionedThroughput: &types.ProvisionedThroughput{
+						ReadCapacityUnits:  aws.Int64(5),
+						WriteCapacityUnits: aws.Int64(5),
+					},
+				},
+				{
+					IndexName: aws.String("status-created_at-index"),
+					KeySchema: []types.KeySchemaElement{
+						{AttributeName: aws.String("status"), KeyType: types.KeyTypeHash},
+						{AttributeName: aws.String("created_at"), KeyType: types.KeyTypeRange},
+					},
+					Projection: &types.Projection{ProjectionType: types.ProjectionTypeAll},
+					ProvisionedThroughput: &types.ProvisionedThroughput{
+						ReadCapacityUnits:  aws.Int64(5),
+						WriteCapacityUnits: aws.Int64(5),
+					},
+				},
+			},
+			ProvisionedThroughput: &types.ProvisionedThroughput{
+				ReadCapacityUnits:  aws.Int64(5),
+				WriteCapacityUnits: aws.Int64(5),
+			},
+		},
+	}
+}
+
+func kbPagesTableDef(tableName string) tableDefinition {
+	return tableDefinition{
+		input: &dynamodb.CreateTableInput{
+			TableName: aws.String(tableName),
+			AttributeDefinitions: []types.AttributeDefinition{
+				{AttributeName: aws.String("page_id"), AttributeType: types.ScalarAttributeTypeS},
+				{AttributeName: aws.String("user_id"), AttributeType: types.ScalarAttributeTypeS},
+				{AttributeName: aws.String("updated_at"), AttributeType: types.ScalarAttributeTypeS},
+				{AttributeName: aws.String("slug"), AttributeType: types.ScalarAttributeTypeS},
+			},
+			KeySchema: []types.KeySchemaElement{
+				{AttributeName: aws.String("page_id"), KeyType: types.KeyTypeHash},
+			},
+			GlobalSecondaryIndexes: []types.GlobalSecondaryIndex{
+				{
+					IndexName: aws.String("user_id-updated_at-index"),
+					KeySchema: []types.KeySchemaElement{
+						{AttributeName: aws.String("user_id"), KeyType: types.KeyTypeHash},
+						{AttributeName: aws.String("updated_at"), KeyType: types.KeyTypeRange},
+					},
+					Projection: &types.Projection{ProjectionType: types.ProjectionTypeAll},
+					ProvisionedThroughput: &types.ProvisionedThroughput{
+						ReadCapacityUnits:  aws.Int64(5),
+						WriteCapacityUnits: aws.Int64(5),
+					},
+				},
+				{
+					IndexName: aws.String("slug-index"),
+					KeySchema: []types.KeySchemaElement{
+						{AttributeName: aws.String("slug"), KeyType: types.KeyTypeHash},
+					},
+					Projection: &types.Projection{ProjectionType: types.ProjectionTypeAll},
+					ProvisionedThroughput: &types.ProvisionedThroughput{
+						ReadCapacityUnits:  aws.Int64(5),
+						WriteCapacityUnits: aws.Int64(5),
+					},
+				},
+			},
+			ProvisionedThroughput: &types.ProvisionedThroughput{
+				ReadCapacityUnits:  aws.Int64(5),
+				WriteCapacityUnits: aws.Int64(5),
+			},
+		},
+	}
+}
+
 func usersTableDef(tableName string) tableDefinition {
 	return tableDefinition{
 		input: &dynamodb.CreateTableInput{

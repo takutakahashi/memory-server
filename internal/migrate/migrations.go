@@ -47,6 +47,16 @@ var allMigrations = []Migration{
 		Description: "create users table with GSI token-index",
 		Up:          migration003CreateUsers,
 	},
+	{
+		Version:     4,
+		Description: "create inbox table with GSIs user_id-created_at-index and status-created_at-index",
+		Up:          migration004CreateInbox,
+	},
+	{
+		Version:     5,
+		Description: "create kb_pages table with GSIs user_id-updated_at-index and slug-index",
+		Up:          migration005CreateKBPages,
+	},
 }
 
 // ---------------------------------------------------------------------------
@@ -73,4 +83,20 @@ func migration003CreateUsers(ctx context.Context, client *dynamodb.Client) error
 		tableName = "users"
 	}
 	return ensureTable(ctx, client, usersTableDef(tableName))
+}
+
+func migration004CreateInbox(ctx context.Context, client *dynamodb.Client) error {
+	tableName := os.Getenv("INBOX_TABLE_NAME")
+	if tableName == "" {
+		tableName = "inbox"
+	}
+	return ensureTable(ctx, client, inboxTableDef(tableName))
+}
+
+func migration005CreateKBPages(ctx context.Context, client *dynamodb.Client) error {
+	tableName := os.Getenv("KB_TABLE_NAME")
+	if tableName == "" {
+		tableName = "kb_pages"
+	}
+	return ensureTable(ctx, client, kbPagesTableDef(tableName))
 }

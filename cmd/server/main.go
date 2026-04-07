@@ -14,6 +14,9 @@ import (
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/takutakahashi/memory-server/internal/api"
 	"github.com/takutakahashi/memory-server/internal/auth"
+	"github.com/takutakahashi/memory-server/internal/curator"
+	"github.com/takutakahashi/memory-server/internal/inbox"
+	"github.com/takutakahashi/memory-server/internal/kb"
 	"github.com/takutakahashi/memory-server/internal/memory"
 	"github.com/takutakahashi/memory-server/internal/migrate"
 	mcpserver "github.com/takutakahashi/memory-server/internal/mcp"
@@ -37,7 +40,11 @@ func main() {
 	}
 	log.Println("DynamoDB schema migrations complete.")
 
-	svc := memory.NewService(cfg)
+	// Initialize services.
+	memorySvc := memory.NewService(cfg)
+	inboxSvc := inbox.NewService(cfg)
+	kbSvc := kb.NewService(cfg)
+	cur := curator.New(inboxSvc)
 
 	mux := http.NewServeMux()
 
@@ -54,7 +61,7 @@ func main() {
 		// own deadline does not cancel the DynamoDB call prematurely.
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
-		if err := svc.Store.Ping(ctx); err != nil {
+		if err := memorySvc.Store.Ping(ctx); err != nil {
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusServiceUnavailable)
 			_ = json.NewEncoder(w).Encode(map[string]interface{}{
@@ -69,7 +76,7 @@ func main() {
 	})
 
 	// MCP routes (no auth — MCP clients manage their own auth)
-	mcpSrv := mcpserver.NewServerWithService(svc)
+	mcpSrv := mcpserver.NewServerWithServices(memorySvc, inboxSvc, kbSvc, cur)
 	mcpSrv.RegisterRoutes(mux)
 
 	// Auth store — always initialised so user routes work.
@@ -82,14 +89,25 @@ func main() {
 	userSrv := api.NewUserServer(authStore)
 	userSrv.RegisterUserRoutes(mux, auth.AdminTokenAuth())
 
-	// REST API memory routes — optionally protected by user Bearer tokens
-	apiSrv := api.New(svc)
+	// REST API routes — optionally protected by user Bearer tokens
+	apiSrv := api.New(memorySvc)
+	inboxSrv := api.NewInboxServer(inboxSvc)
+	kbSrv := api.NewKBServer(kbSvc)
+	curatorSrv := api.NewCuratorServer(cur)
+
 	if authEnabled {
-		log.Println("Auth enabled: memory API requires Bearer user token")
-		apiSrv.RegisterRoutes(mux, auth.BearerAuth(authStore))
+		log.Println("Auth enabled: API requires Bearer user token")
+		authMiddleware := auth.BearerAuth(authStore)
+		apiSrv.RegisterRoutes(mux, authMiddleware)
+		inboxSrv.RegisterInboxRoutes(mux, authMiddleware)
+		kbSrv.RegisterKBRoutes(mux, authMiddleware)
+		curatorSrv.RegisterCuratorRoutes(mux, authMiddleware)
 	} else {
-		log.Println("Auth disabled: memory API is open (set AUTH_ENABLED=true to enable)")
+		log.Println("Auth disabled: API is open (set AUTH_ENABLED=true to enable)")
 		apiSrv.RegisterRoutes(mux)
+		inboxSrv.RegisterInboxRoutes(mux)
+		kbSrv.RegisterKBRoutes(mux)
+		curatorSrv.RegisterCuratorRoutes(mux)
 	}
 
 	port := os.Getenv("PORT")

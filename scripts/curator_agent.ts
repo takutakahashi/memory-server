@@ -1,21 +1,29 @@
 /**
  * curator_agent.ts
  *
- * Reads pending inbox entries from stdin (JSON array), runs a Claude Agent SDK
- * session to classify each entry, and writes the resulting action list to stdout
- * as a JSON array.
+ * Reads pending inbox entries from stdin (JSON array), then runs a
+ * Claude Agent SDK session connected to the memory-server MCP endpoint.
+ * Claude autonomously searches existing memories/KB pages and decides
+ * whether to create new entries, update existing ones, or skip — using
+ * the MCP tools provided by the server.
  *
- * Environment:
- *   ANTHROPIC_API_KEY  – Anthropic API key (required). Set by the Go curator
- *                        service, overriding the process-level env when a
- *                        per-request key is supplied via X-Anthropic-Key header.
+ * Environment variables (all set by the Go curator service):
+ *   ANTHROPIC_API_KEY         – Anthropic API key (required)
+ *   MEMORY_SERVER_MCP_URL     – memory-server MCP endpoint
+ *                               (default: http://localhost:8080/mcp)
+ *   MEMORY_SERVER_TOKEN       – Bearer token for the memory-server API
+ *                               (optional; omit when AUTH_ENABLED=false)
+ *   CURATOR_USER_ID           – user_id to scope memory/KB operations
+ *                               (default: "default")
  *
  * stdin:  JSON array of inbox.Entry objects
- * stdout: JSON array of CuratorAction objects
+ * stdout: JSON array of processed inbox_ids  e.g. ["id1","id2"]
  * stderr: diagnostic / error messages
+ * exit 0: success (stdout contains processed ids)
+ * exit 1: fatal error
  */
 
-import { query } from "@anthropic-ai/claude-agent-sdk";
+import { query, type SDKMessage } from "@anthropic-ai/claude-agent-sdk";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -30,36 +38,20 @@ interface InboxEntry {
   created_at?: string;
 }
 
-interface MemoryPayload {
-  content: string;
-  tags: string[];
-  scope: "private" | "public";
-}
+// ---------------------------------------------------------------------------
+// Config
+// ---------------------------------------------------------------------------
 
-interface KBPagePayload {
-  title: string;
-  slug: string;
-  content: string;
-  summary: string;
-  category: string;
-  tags: string[];
-  scope: "private" | "public";
-}
-
-interface CuratorAction {
-  inbox_id: string;
-  action: "memory" | "kb" | "both" | "skip";
-  memory?: MemoryPayload;
-  kb_page?: KBPagePayload;
-  skip_reason?: string;
-}
+const MCP_URL =
+  process.env.MEMORY_SERVER_MCP_URL ?? "http://localhost:8080/mcp";
+const TOKEN = process.env.MEMORY_SERVER_TOKEN ?? "";
+const USER_ID = process.env.CURATOR_USER_ID ?? "default";
 
 // ---------------------------------------------------------------------------
 // Main
 // ---------------------------------------------------------------------------
 
 async function main(): Promise<void> {
-  // Read all of stdin
   const stdinText = await Bun.stdin.text();
 
   let entries: InboxEntry[];
@@ -71,120 +63,205 @@ async function main(): Promise<void> {
   }
 
   if (!Array.isArray(entries) || entries.length === 0) {
-    // Nothing to do
     process.stdout.write("[]\n");
     return;
   }
 
-  const prompt = buildPrompt(entries);
+  const processedIds: string[] = [];
 
-  let finalText = "";
+  // Process entries in batches to keep context manageable.
+  // Each batch gets its own agent session so tool call history stays short.
+  const BATCH_SIZE = 10;
+  for (let i = 0; i < entries.length; i += BATCH_SIZE) {
+    const batch = entries.slice(i, i + BATCH_SIZE);
+    const ids = await processBatch(batch);
+    processedIds.push(...ids);
+  }
+
+  process.stdout.write(JSON.stringify(processedIds) + "\n");
+}
+
+// ---------------------------------------------------------------------------
+// Process a batch of entries with one agent session
+// ---------------------------------------------------------------------------
+
+async function processBatch(entries: InboxEntry[]): Promise<string[]> {
+  const mcpHeaders: Record<string, string> = {};
+  if (TOKEN) {
+    mcpHeaders["Authorization"] = `Bearer ${TOKEN}`;
+  }
+
+  const prompt = buildPrompt(entries, USER_ID);
+
+  process.stderr.write(
+    `[curator] starting agent session for ${entries.length} entries via ${MCP_URL}\n`
+  );
+
+  let finalResult = "";
+  let errorOccurred = false;
+
   try {
     for await (const message of query({
       prompt,
       options: {
-        // No file-system tools needed — Claude only needs to reason and output JSON.
+        // No local file-system tools needed — all operations go via MCP.
         allowedTools: [],
-        permissionMode: "dontAsk",
-        maxTurns: 3,
+        permissionMode: "bypassPermissions",
+        allowDangerouslySkipPermissions: true,
+        maxTurns: 40,
+        mcpServers: {
+          "memory-server": {
+            type: "sse",
+            url: MCP_URL,
+            ...(Object.keys(mcpHeaders).length > 0 && {
+              requestInit: { headers: mcpHeaders },
+            }),
+          },
+        },
       },
     })) {
-      if (message.type === "result" && message.subtype === "success") {
-        finalText = message.result ?? "";
-      } else if (message.type === "result" && message.subtype !== "success") {
-        process.stderr.write(
-          `Claude agent finished with non-success subtype: ${message.subtype}\n`
-        );
-        process.exit(1);
+      logMessage(message);
+
+      if (message.type === "result") {
+        if (message.subtype === "success") {
+          finalResult = message.result ?? "";
+        } else {
+          process.stderr.write(
+            `[curator] agent finished with subtype=${message.subtype}\n`
+          );
+          errorOccurred = true;
+        }
       }
     }
   } catch (err) {
-    process.stderr.write(`claude-agent-sdk error: ${err}\n`);
+    process.stderr.write(`[curator] claude-agent-sdk error: ${err}\n`);
     process.exit(1);
   }
 
-  // Claude might wrap the JSON in a markdown fence — extract the array.
-  const jsonText = extractJSON(finalText);
-  if (!jsonText) {
-    process.stderr.write(
-      `No JSON array found in Claude response:\n${finalText}\n`
-    );
-    process.exit(1);
+  if (errorOccurred) {
+    // Return no processed IDs for this batch — Go will retry next run.
+    return [];
   }
 
-  // Validate that the output is parseable before forwarding.
-  try {
-    JSON.parse(jsonText);
-  } catch (err) {
-    process.stderr.write(
-      `Claude response JSON is invalid (${err}):\n${jsonText}\n`
-    );
-    process.exit(1);
-  }
-
-  process.stdout.write(jsonText + "\n");
+  // Extract the list of processed inbox_ids from the agent's final reply.
+  return extractProcessedIds(finalResult, entries);
 }
 
 // ---------------------------------------------------------------------------
-// Helpers
+// Prompt
 // ---------------------------------------------------------------------------
 
-function buildPrompt(entries: InboxEntry[]): string {
-  return `You are a memory curator. Analyse each inbox entry and decide what to create.
+function buildPrompt(entries: InboxEntry[], userID: string): string {
+  return `You are a memory curator assistant for user "${userID}".
 
-Rules:
-- "memory"  → a fact, experience, or short-lived information worth remembering
-- "kb"      → structured, reusable knowledge, how-to guides, or reference material
-- "both"    → create both a memory AND a KB page
-- "skip"    → duplicate, spam, or not worth storing
+Your task is to process the following inbox entries and organise them into the
+memory system using the MCP tools available to you.
 
-Inbox entries:
+## Inbox entries to process
+
 ${JSON.stringify(entries, null, 2)}
 
-Reply with ONLY a valid JSON array — no markdown fences, no explanation text.
-One element per entry, strictly following this schema:
+## Instructions
 
-[
-  {
-    "inbox_id": "<entry inbox_id>",
-    "action": "memory" | "kb" | "both" | "skip",
-    "memory": {
-      "content": "<concise memory text>",
-      "tags": ["tag1", "tag2"],
-      "scope": "private"
-    },
-    "kb_page": {
-      "title": "<page title>",
-      "slug": "<url-safe-slug>",
-      "content": "<full markdown content>",
-      "summary": "<one-sentence summary>",
-      "category": "<category>",
-      "tags": ["tag1", "tag2"],
-      "scope": "private"
-    },
-    "skip_reason": "<reason if action is skip>"
-  }
-]
+For each entry, follow these steps:
 
-Include "memory" only when action is "memory" or "both".
-Include "kb_page" only when action is "kb" or "both".
-Include "skip_reason" only when action is "skip".`;
+1. **Search first** — use \`search_memories\` and \`search_kb\` to find existing
+   content related to the entry.
+
+2. **Decide the action**:
+   - If closely related memory exists → **update it** with the new information
+     using \`update_memory\`.
+   - If closely related KB page exists → **update it** using \`update_kb_page\`.
+   - If the content is factual, experiential, or a short note → **create a new
+     memory** using \`add_memory\`.
+   - If the content is structured knowledge (how-to, reference, guide) →
+     **create a KB page** using \`create_kb_page\`.
+   - If the content is duplicate, spam, or too vague → **skip it**.
+   - An entry can result in both a memory and a KB page if appropriate.
+
+3. Always set \`user_id\` to "${userID}" in every tool call.
+
+4. After processing all entries, reply with a JSON array of the inbox_ids you
+   successfully handled (created or updated something, or intentionally skipped):
+
+\`\`\`json
+["inbox_id_1", "inbox_id_2"]
+\`\`\`
+
+Only include ids you actually processed. If a tool call failed and you could not
+handle the entry, omit its id.`;
 }
 
-function extractJSON(text: string): string | null {
-  // Strip markdown code fences if present
-  const fenceMatch = text.match(/```(?:json)?\s*([\s\S]*?)```/);
-  if (fenceMatch) {
-    return fenceMatch[1].trim();
-  }
+// ---------------------------------------------------------------------------
+// Extract processed ids from the agent's final text
+// ---------------------------------------------------------------------------
 
-  // Find the outermost JSON array
-  const arrayMatch = text.match(/\[[\s\S]*\]/);
+function extractProcessedIds(
+  text: string,
+  entries: InboxEntry[]
+): string[] {
+  // Try to find a JSON array in the response.
+  const fenceMatch = text.match(/```(?:json)?\s*(\[[\s\S]*?\])\s*```/);
+  const arrayMatch = fenceMatch
+    ? fenceMatch[1]
+    : text.match(/\[[\s\S]*?\]/)?.[0];
+
   if (arrayMatch) {
-    return arrayMatch[0];
+    try {
+      const ids = JSON.parse(arrayMatch);
+      if (Array.isArray(ids) && ids.every((id) => typeof id === "string")) {
+        return ids;
+      }
+    } catch {
+      // fall through
+    }
   }
 
-  return null;
+  // Fallback: if the agent mentioned processing all entries, return all ids.
+  const allIds = entries.map((e) => e.inbox_id);
+  const lowerText = text.toLowerCase();
+  if (
+    lowerText.includes("all entries") ||
+    lowerText.includes("all inbox") ||
+    lowerText.includes("processed all")
+  ) {
+    process.stderr.write(
+      "[curator] could not parse id list; assuming all entries processed\n"
+    );
+    return allIds;
+  }
+
+  // Last resort: return ids that appear in the text.
+  return allIds.filter((id) => text.includes(id));
+}
+
+// ---------------------------------------------------------------------------
+// Logging
+// ---------------------------------------------------------------------------
+
+function logMessage(message: SDKMessage): void {
+  switch (message.type) {
+    case "assistant": {
+      const content = (message as any).message?.content ?? [];
+      for (const block of content) {
+        if (block.type === "text") {
+          process.stderr.write(`[claude] ${block.text.slice(0, 200)}\n`);
+        } else if (block.type === "tool_use") {
+          process.stderr.write(
+            `[tool→] ${block.name}(${JSON.stringify(block.input).slice(0, 120)})\n`
+          );
+        }
+      }
+      break;
+    }
+    case "result":
+      process.stderr.write(
+        `[curator] session done — subtype=${message.subtype} cost=$${(message as any).total_cost_usd?.toFixed(4) ?? "?"}\n`
+      );
+      break;
+    default:
+      break;
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -192,6 +269,6 @@ function extractJSON(text: string): string | null {
 // ---------------------------------------------------------------------------
 
 main().catch((err) => {
-  process.stderr.write(`Unhandled error: ${err}\n`);
+  process.stderr.write(`[curator] unhandled error: ${err}\n`);
   process.exit(1);
 });

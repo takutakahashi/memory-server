@@ -71,7 +71,7 @@ func NewServer(ctx context.Context) (*Server, error) {
 	memorySvc := memory.NewService(cfg)
 	inboxSvc := inbox.NewService(cfg)
 	kbSvc := kb.NewService(cfg)
-	cur := curator.New(inboxSvc, memorySvc, kbSvc)
+	cur := curator.New(inboxSvc)
 
 	return NewServerWithServices(memorySvc, inboxSvc, kbSvc, cur), nil
 }

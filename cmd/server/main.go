@@ -44,7 +44,7 @@ func main() {
 	memorySvc := memory.NewService(cfg)
 	inboxSvc := inbox.NewService(cfg)
 	kbSvc := kb.NewService(cfg)
-	cur := curator.New(inboxSvc, memorySvc, kbSvc)
+	cur := curator.New(inboxSvc)
 
 	mux := http.NewServeMux()
 

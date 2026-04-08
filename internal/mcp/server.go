@@ -71,7 +71,7 @@ func NewServer(ctx context.Context) (*Server, error) {
 	memorySvc := memory.NewService(cfg)
 	inboxSvc := inbox.NewService(cfg)
 	kbSvc := kb.NewService(cfg)
-	cur := curator.New(inboxSvc)
+	cur := curator.New(inboxSvc, memorySvc, kbSvc)
 
 	return NewServerWithServices(memorySvc, inboxSvc, kbSvc, cur), nil
 }
@@ -617,7 +617,8 @@ func (s *Server) handleDeleteKBPage(ctx context.Context, req *mcp.CallToolReques
 // ============================================================
 
 func (s *Server) handleRunCurator(ctx context.Context, req *mcp.CallToolRequest, input RunCuratorInput) (*mcp.CallToolResult, any, error) {
-	result, err := s.curator.Run(ctx)
+	// MCP has no HTTP headers, so ANTHROPIC_API_KEY must come from the environment.
+	result, err := s.curator.Run(ctx, curator.RunInput{})
 	if err != nil {
 		return errorResult(err.Error()), nil, nil
 	}

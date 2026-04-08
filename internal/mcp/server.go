@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"strings"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/takutakahashi/memory-server/internal/curator"
@@ -307,6 +308,14 @@ func (s *Server) registerTools() {
 }
 
 // RegisterRoutes registers the MCP-specific routes (/sse and /mcp) on the given mux.
+//
+// When the CURATOR_TOKEN environment variable is set, both endpoints are
+// protected by Bearer token authentication. Requests must supply either the
+// CURATOR_TOKEN or the ADMIN_TOKEN in an "Authorization: Bearer <token>"
+// header. This allows the curator agent subprocess to authenticate while
+// keeping unauthenticated access blocked.
+//
+// When CURATOR_TOKEN is not set the endpoints remain open (previous behaviour).
 func (s *Server) RegisterRoutes(mux *http.ServeMux) {
 	getServer := func(req *http.Request) *mcp.Server {
 		return s.mcpServer
@@ -315,8 +324,51 @@ func (s *Server) RegisterRoutes(mux *http.ServeMux) {
 	sseHandler := mcp.NewSSEHandler(getServer, nil)
 	streamableHandler := mcp.NewStreamableHTTPHandler(getServer, nil)
 
-	mux.Handle("/sse", sseHandler)
-	mux.Handle("/mcp", streamableHandler)
+	// Optionally wrap with Bearer auth when CURATOR_TOKEN is configured.
+	var handler http.Handler = http.NewServeMux()
+	inner := handler.(*http.ServeMux)
+	inner.Handle("/sse", sseHandler)
+	inner.Handle("/mcp", streamableHandler)
+
+	wrapped := mcpAuthMiddleware(inner)
+	mux.Handle("/sse", wrapped)
+	mux.Handle("/mcp", wrapped)
+}
+
+// mcpAuthMiddleware returns a middleware that enforces Bearer token auth on
+// MCP endpoints when CURATOR_TOKEN is set, and passes through otherwise.
+func mcpAuthMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		curatorToken := os.Getenv("CURATOR_TOKEN")
+		adminToken := os.Getenv("ADMIN_TOKEN")
+
+		// If neither token is configured, allow all requests (open mode).
+		if curatorToken == "" && adminToken == "" {
+			next.ServeHTTP(w, r)
+			return
+		}
+
+		// Extract Bearer token.
+		token := ""
+		if h := r.Header.Get("Authorization"); h != "" {
+			if len(h) > 7 && strings.EqualFold(h[:7], "bearer ") {
+				token = strings.TrimSpace(h[7:])
+			}
+		}
+
+		if token == "" {
+			http.Error(w, `{"error":"missing Authorization Bearer token"}`, http.StatusUnauthorized)
+			return
+		}
+
+		if (curatorToken != "" && token == curatorToken) ||
+			(adminToken != "" && token == adminToken) {
+			next.ServeHTTP(w, r)
+			return
+		}
+
+		http.Error(w, `{"error":"invalid token"}`, http.StatusUnauthorized)
+	})
 }
 
 // Start starts the MCP server over SSE and Streamable HTTP.

@@ -178,20 +178,44 @@ func (c *Curator) runAgent(ctx context.Context, input RunInput, entries []*inbox
 //
 // It starts from the current process's full environment (os.Environ()) so that
 // all configuration — AWS credentials, region, table names, etc. — is inherited
-// automatically. When headerAPIKey is non-empty it replaces the
-// ANTHROPIC_API_KEY entry so that per-request keys take precedence over the
-// server-level default.
+// automatically.
+//
+// Overrides applied (in order):
+//  1. If headerAPIKey is non-empty, ANTHROPIC_API_KEY is replaced so that
+//     per-request keys take precedence over the server-level default.
+//  2. If MEMORY_SERVER_TOKEN is not already set in the environment, it is
+//     populated from CURATOR_TOKEN so the agent can authenticate against the
+//     memory-server MCP / REST endpoint without any extra configuration.
 func buildEnv(headerAPIKey string) []string {
-	env := os.Environ()
-	if headerAPIKey == "" {
-		return env
-	}
+	base := os.Environ()
 
-	result := make([]string, 0, len(env))
-	for _, e := range env {
-		if !strings.HasPrefix(e, "ANTHROPIC_API_KEY=") {
-			result = append(result, e)
+	hasMemoryToken := false
+	for _, e := range base {
+		if strings.HasPrefix(e, "MEMORY_SERVER_TOKEN=") {
+			hasMemoryToken = true
+			break
 		}
 	}
-	return append(result, "ANTHROPIC_API_KEY="+headerAPIKey)
+
+	// Collect entries, replacing ANTHROPIC_API_KEY if a per-request key was
+	// supplied and injecting MEMORY_SERVER_TOKEN when absent.
+	result := make([]string, 0, len(base)+2)
+	for _, e := range base {
+		if headerAPIKey != "" && strings.HasPrefix(e, "ANTHROPIC_API_KEY=") {
+			continue // will be re-added below
+		}
+		result = append(result, e)
+	}
+
+	if headerAPIKey != "" {
+		result = append(result, "ANTHROPIC_API_KEY="+headerAPIKey)
+	}
+
+	if !hasMemoryToken {
+		if curatorToken := os.Getenv("CURATOR_TOKEN"); curatorToken != "" {
+			result = append(result, "MEMORY_SERVER_TOKEN="+curatorToken)
+		}
+	}
+
+	return result
 }

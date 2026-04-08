@@ -40,6 +40,14 @@ func BearerAuth(store UserStorer) func(http.Handler) http.Handler {
 				return
 			}
 
+			// CURATOR_TOKEN grants access with user_id "curator" (used by the
+			// curator agent subprocess to call the memory-server MCP / REST API).
+			if curatorToken := os.Getenv("CURATOR_TOKEN"); curatorToken != "" && token == curatorToken {
+				ctx := context.WithValue(r.Context(), userIDKey, "curator")
+				next.ServeHTTP(w, r.WithContext(ctx))
+				return
+			}
+
 			user, err := store.GetUserByToken(r.Context(), token)
 			if err != nil {
 				if errors.Is(err, ErrNotFound) {

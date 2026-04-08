@@ -23,3 +23,12 @@ type RunResult struct {
 	ProcessedCount int       `json:"processed_count"`
 	Message        string    `json:"message"`
 }
+
+// RunInput holds options for a single Curator run.
+type RunInput struct {
+	// AnthropicAPIKey is the Anthropic API key to use for this run.
+	// When non-empty it overrides the ANTHROPIC_API_KEY environment variable
+	// that was present at server start-up. Typically populated from the
+	// X-Anthropic-Key HTTP request header.
+	AnthropicAPIKey string
+}

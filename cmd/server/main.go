@@ -84,6 +84,11 @@ func main() {
 	// Set ADMIN_TOKEN to enable the user management API (POST/GET /api/v1/users).
 	authStore := auth.NewStore(cfg)
 	authEnabled := os.Getenv("AUTH_ENABLED") == "true"
+	if os.Getenv("CURATOR_TOKEN") != "" {
+		log.Println("Curator token configured: MCP endpoints require Bearer auth; curator agent will authenticate automatically")
+	} else {
+		log.Println("Curator token not set (CURATOR_TOKEN): MCP endpoints are open; set CURATOR_TOKEN to enable curator authentication")
+	}
 
 	// User management routes (require ADMIN_TOKEN via AdminTokenAuth)
 	userSrv := api.NewUserServer(authStore)

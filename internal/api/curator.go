@@ -35,7 +35,13 @@ func (s *CuratorServer) RegisterCuratorRoutes(mux *http.ServeMux, authMiddleware
 }
 
 func (s *CuratorServer) handleRun(w http.ResponseWriter, r *http.Request) {
-	result, err := s.cur.Run(r.Context())
+	// X-Anthropic-Key header takes priority over the server-level ANTHROPIC_API_KEY.
+	// The curator subprocess will receive this key via its environment.
+	anthropicKey := r.Header.Get("X-Anthropic-Key")
+
+	result, err := s.cur.Run(r.Context(), curator.RunInput{
+		AnthropicAPIKey: anthropicKey,
+	})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return

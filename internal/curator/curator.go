@@ -1,22 +1,37 @@
 // Package curator provides the Curator service, which periodically processes
-// pending Inbox entries and organizes them into Memories and KB pages.
+// pending Inbox entries and organises them into Memories and KB pages.
 //
-// This is a "no-op Curator": it finds all pending Inbox entries and marks them
-// as processed without performing any actual analysis or extraction.
-// A future implementation will use an AI model to distill Inbox entries into
-// Memories and Knowledge Base pages.
+// The Curator launches a TypeScript agent script (scripts/curator_agent.ts)
+// via Bun as a subprocess. The agent connects to the memory-server MCP
+// endpoint and autonomously decides how to handle each Inbox entry —
+// searching for existing content, updating it when relevant, or creating
+// new memories / KB pages as appropriate.
+//
+// API-key resolution order:
+//
+//  1. RunInput.AnthropicAPIKey (populated from the X-Anthropic-Key request header)
+//  2. ANTHROPIC_API_KEY from the environment inherited at server start-up
 package curator
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"log"
+	"os"
+	"os/exec"
+	"strings"
 	"sync"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/takutakahashi/memory-server/internal/inbox"
 )
+
+// ----------------------------------------------------------------------------
+// Curator
+// ----------------------------------------------------------------------------
 
 // Curator orchestrates the periodic processing of Inbox entries.
 type Curator struct {
@@ -34,10 +49,12 @@ func New(inboxSvc *inbox.Service) *Curator {
 
 // Run executes one Curator cycle.
 //
-// No-op behaviour: fetches all pending Inbox entries and marks them as
-// processed. No AI analysis, Memory extraction, or KB page generation is
-// performed in this implementation.
-func (c *Curator) Run(ctx context.Context) (*RunResult, error) {
+// It fetches up to 100 pending Inbox entries, passes them to the TypeScript
+// curator agent (via Bun) connected to the memory-server MCP endpoint.
+// The agent autonomously searches, creates, and updates memories/KB pages.
+// The agent returns the list of processed inbox_ids, which are then marked
+// as "processed" in the Inbox.
+func (c *Curator) Run(ctx context.Context, input RunInput) (*RunResult, error) {
 	runID := uuid.New().String()
 	startedAt := time.Now().UTC()
 	log.Printf("[curator] run %s started", runID)
@@ -47,6 +64,7 @@ func (c *Curator) Run(ctx context.Context) (*RunResult, error) {
 		StartedAt: startedAt,
 	}
 
+	// Fetch pending entries.
 	entries, err := c.inboxSvc.ListPending(ctx, 100)
 	if err != nil {
 		result.CompletedAt = time.Now().UTC()
@@ -60,16 +78,27 @@ func (c *Curator) Run(ctx context.Context) (*RunResult, error) {
 		result.CompletedAt = time.Now().UTC()
 		result.Status = RunStatusNoop
 		result.Message = "no pending inbox entries found"
-		result.ProcessedCount = 0
 		log.Printf("[curator] run %s completed: noop (no pending entries)", runID)
 		c.setLastResult(result)
 		return result, nil
 	}
 
+	// Run the TypeScript agent — it connects to the MCP server and handles
+	// everything: search, create, update.
+	processedIDs, err := c.runAgent(ctx, input, entries)
+	if err != nil {
+		result.CompletedAt = time.Now().UTC()
+		result.Status = RunStatusFailed
+		result.Message = fmt.Sprintf("agent error: %v", err)
+		c.setLastResult(result)
+		return result, fmt.Errorf("run agent: %w", err)
+	}
+
+	// Mark entries reported as handled by the agent.
 	processed := 0
-	for _, e := range entries {
-		if err := c.inboxSvc.MarkProcessed(ctx, e.InboxID); err != nil {
-			log.Printf("[curator] run %s: failed to mark entry %s as processed: %v", runID, e.InboxID, err)
+	for _, id := range processedIDs {
+		if err := c.inboxSvc.MarkProcessed(ctx, id); err != nil {
+			log.Printf("[curator] run %s: mark processed %s: %v", runID, id, err)
 			continue
 		}
 		processed++
@@ -78,7 +107,7 @@ func (c *Curator) Run(ctx context.Context) (*RunResult, error) {
 	result.CompletedAt = time.Now().UTC()
 	result.Status = RunStatusSuccess
 	result.ProcessedCount = processed
-	result.Message = fmt.Sprintf("processed %d inbox entries (no-op: entries marked as processed without analysis)", processed)
+	result.Message = fmt.Sprintf("processed %d inbox entries", processed)
 
 	log.Printf("[curator] run %s completed: processed %d entries", runID, processed)
 	c.setLastResult(result)
@@ -97,4 +126,96 @@ func (c *Curator) setLastResult(r *RunResult) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.lastResult = r
+}
+
+// ----------------------------------------------------------------------------
+// Agent subprocess
+// ----------------------------------------------------------------------------
+
+// runAgent serialises entries to JSON, launches the Bun/TypeScript subprocess,
+// and returns the list of inbox_ids that the agent successfully processed.
+func (c *Curator) runAgent(ctx context.Context, input RunInput, entries []*inbox.Entry) ([]string, error) {
+	inputJSON, err := json.Marshal(entries)
+	if err != nil {
+		return nil, fmt.Errorf("marshal entries: %w", err)
+	}
+
+	scriptPath := os.Getenv("CURATOR_AGENT_SCRIPT")
+	if scriptPath == "" {
+		scriptPath = "scripts/curator_agent.ts"
+	}
+
+	cmd := exec.CommandContext(ctx, "bun", "run", scriptPath)
+	cmd.Env = buildEnv(input.AnthropicAPIKey)
+	cmd.Stdin = bytes.NewReader(inputJSON)
+
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+
+	log.Printf("[curator] launching agent: bun run %s (%d entries)", scriptPath, len(entries))
+
+	if err := cmd.Run(); err != nil {
+		if stderr.Len() > 0 {
+			log.Printf("[curator] agent stderr:\n%s", stderr.String())
+		}
+		return nil, fmt.Errorf("agent subprocess: %w", err)
+	}
+
+	if stderr.Len() > 0 {
+		log.Printf("[curator] agent diagnostics:\n%s", stderr.String())
+	}
+
+	var processedIDs []string
+	if err := json.Unmarshal(stdout.Bytes(), &processedIDs); err != nil {
+		return nil, fmt.Errorf("unmarshal agent output: %w (output: %s)", err, stdout.String())
+	}
+
+	return processedIDs, nil
+}
+
+// buildEnv constructs the subprocess environment.
+//
+// It starts from the current process's full environment (os.Environ()) so that
+// all configuration — AWS credentials, region, table names, etc. — is inherited
+// automatically.
+//
+// Overrides applied (in order):
+//  1. If headerAPIKey is non-empty, ANTHROPIC_API_KEY is replaced so that
+//     per-request keys take precedence over the server-level default.
+//  2. If MEMORY_SERVER_TOKEN is not already set in the environment, it is
+//     populated from CURATOR_TOKEN so the agent can authenticate against the
+//     memory-server MCP / REST endpoint without any extra configuration.
+func buildEnv(headerAPIKey string) []string {
+	base := os.Environ()
+
+	hasMemoryToken := false
+	for _, e := range base {
+		if strings.HasPrefix(e, "MEMORY_SERVER_TOKEN=") {
+			hasMemoryToken = true
+			break
+		}
+	}
+
+	// Collect entries, replacing ANTHROPIC_API_KEY if a per-request key was
+	// supplied and injecting MEMORY_SERVER_TOKEN when absent.
+	result := make([]string, 0, len(base)+2)
+	for _, e := range base {
+		if headerAPIKey != "" && strings.HasPrefix(e, "ANTHROPIC_API_KEY=") {
+			continue // will be re-added below
+		}
+		result = append(result, e)
+	}
+
+	if headerAPIKey != "" {
+		result = append(result, "ANTHROPIC_API_KEY="+headerAPIKey)
+	}
+
+	if !hasMemoryToken {
+		if curatorToken := os.Getenv("CURATOR_TOKEN"); curatorToken != "" {
+			result = append(result, "MEMORY_SERVER_TOKEN="+curatorToken)
+		}
+	}
+
+	return result
 }

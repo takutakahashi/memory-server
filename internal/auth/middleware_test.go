@@ -140,6 +140,38 @@ func TestBearerAuth_AdminTokenNotSet_FallsBackToUserLookup(t *testing.T) {
 	}
 }
 
+func TestBearerAuth_CuratorToken_GrantsCuratorAccess(t *testing.T) {
+	t.Setenv("CURATOR_TOKEN", "curator-secret")
+	store := newFakeStore() // no users in store
+	var uid string
+	h := auth.BearerAuth(store)(captureUserID(&uid))
+
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, bearerReq("curator-secret"))
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", w.Code)
+	}
+	if uid != "curator" {
+		t.Errorf("user_id = %q, want curator", uid)
+	}
+}
+
+func TestBearerAuth_CuratorTokenNotSet_FallsBackToUserLookup(t *testing.T) {
+	// CURATOR_TOKEN unset — regular user token should still work
+	store := newFakeStore(&auth.User{UserID: "carol", Token: "carol-token"})
+	var uid string
+	h := auth.BearerAuth(store)(captureUserID(&uid))
+
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, bearerReq("carol-token"))
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", w.Code)
+	}
+	if uid != "carol" {
+		t.Errorf("user_id = %q, want carol", uid)
+	}
+}
+
 // -------------------------------------------------------------------------
 // AdminTokenAuth tests
 // -------------------------------------------------------------------------

@@ -99,10 +99,8 @@ existingSecret: ""
 # Auth configuration
 auth:
   # Admin token — grants super-user access to both the user management API
-  # and (when authEnabled=true) the memory API.
+  # and the memory API (as the "admin" user).
   adminToken: ""
-  # Set to true to require Bearer tokens on all memory endpoints.
-  authEnabled: false
 
 # Curator configuration
 # The curator agent uses the Anthropic API (via claude-agent-sdk) to

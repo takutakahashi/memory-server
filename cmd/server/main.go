@@ -80,10 +80,8 @@ func main() {
 	mcpSrv.RegisterRoutes(mux)
 
 	// Auth store — always initialised so user routes work.
-	// Set AUTH_ENABLED=true to also require Bearer tokens on memory endpoints.
 	// Set ADMIN_TOKEN to enable the user management API (POST/GET /api/v1/users).
 	authStore := auth.NewStore(cfg)
-	authEnabled := os.Getenv("AUTH_ENABLED") == "true"
 	if os.Getenv("CURATOR_TOKEN") != "" {
 		log.Println("Curator token configured: MCP endpoints require Bearer auth; curator agent will authenticate automatically")
 	} else {
@@ -94,26 +92,19 @@ func main() {
 	userSrv := api.NewUserServer(authStore)
 	userSrv.RegisterUserRoutes(mux, auth.AdminTokenAuth())
 
-	// REST API routes — optionally protected by user Bearer tokens
+	// REST API routes — always protected by Bearer token auth.
+	authMiddleware := auth.BearerAuth(authStore)
+	log.Println("Auth enabled: API requires Bearer user token")
+
 	apiSrv := api.New(memorySvc)
 	inboxSrv := api.NewInboxServer(inboxSvc)
 	kbSrv := api.NewKBServer(kbSvc)
 	curatorSrv := api.NewCuratorServer(cur)
 
-	if authEnabled {
-		log.Println("Auth enabled: API requires Bearer user token")
-		authMiddleware := auth.BearerAuth(authStore)
-		apiSrv.RegisterRoutes(mux, authMiddleware)
-		inboxSrv.RegisterInboxRoutes(mux, authMiddleware)
-		kbSrv.RegisterKBRoutes(mux, authMiddleware)
-		curatorSrv.RegisterCuratorRoutes(mux, authMiddleware)
-	} else {
-		log.Println("Auth disabled: API is open (set AUTH_ENABLED=true to enable)")
-		apiSrv.RegisterRoutes(mux)
-		inboxSrv.RegisterInboxRoutes(mux)
-		kbSrv.RegisterKBRoutes(mux)
-		curatorSrv.RegisterCuratorRoutes(mux)
-	}
+	apiSrv.RegisterRoutes(mux, authMiddleware)
+	inboxSrv.RegisterInboxRoutes(mux, authMiddleware)
+	kbSrv.RegisterKBRoutes(mux, authMiddleware)
+	curatorSrv.RegisterCuratorRoutes(mux, authMiddleware)
 
 	port := os.Getenv("PORT")
 	if port == "" {

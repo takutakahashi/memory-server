@@ -2,8 +2,8 @@ apiVersion: v2
 name: memory-server
 description: A Helm chart for Memory MCP Server - S3 Vectors + DynamoDB backed memory for Claude MCP, with Knowledge Base Wiki frontend
 type: application
-version: 0.17.0
-appVersion: "0.17.0"
+version: 0.18.0
+appVersion: "0.18.0"
 home: https://github.com/takutakahashi/memory-server
 sources:
   - https://github.com/takutakahashi/memory-server

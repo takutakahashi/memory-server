@@ -107,6 +107,7 @@ async function processBatch(entries: InboxEntry[]): Promise<string[]> {
         // No local file-system tools needed — all operations go via MCP.
         allowedTools: [],
         permissionMode: "bypassPermissions",
+        allowDangerouslySkipPermissions: true,
         maxTurns: 40,
         mcpServers: {
           "memory-server": {

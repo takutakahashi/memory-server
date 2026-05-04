@@ -21,7 +21,9 @@ COPY scripts/ ./
 # Final image
 FROM alpine:3.20
 
-RUN apk add --no-cache ca-certificates tzdata libstdc++ libgcc
+RUN apk add --no-cache ca-certificates tzdata libstdc++ libgcc && \
+    addgroup -S appgroup && \
+    adduser -S -u 1001 -G appgroup appuser
 
 WORKDIR /app
 
@@ -34,6 +36,10 @@ COPY --from=oven/bun:1-alpine /usr/local/bin/bun /usr/local/bin/bun
 
 # Copy scripts with installed node_modules
 COPY --from=scripts-builder /app/scripts /app/scripts
+
+RUN chown -R appuser:appgroup /app
+
+USER appuser
 
 EXPOSE 8080
 

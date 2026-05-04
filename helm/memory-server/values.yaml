@@ -95,6 +95,24 @@ auth:
   # Set to true to require Bearer tokens on all memory endpoints.
   authEnabled: false
 
+# Curator configuration
+# The curator agent uses the Anthropic API (via claude-agent-sdk) to
+# autonomously process pending Inbox entries into Memories and KB pages.
+curator:
+  # Name of an existing Secret to mount via envFrom.
+  # All keys in the secret are exposed as environment variables to the server
+  # and inherited by the curator subprocess (bun run scripts/curator_agent.ts).
+  # Recommended keys:
+  #   CLAUDE_CODE_OAUTH_TOKEN  – OAuth token for the claude-agent-sdk
+  #   CURATOR_TOKEN            – Bearer token for MCP endpoint auth
+  secretName: ""
+
+  # MCP endpoint URL the curator agent connects to (default: in-cluster service).
+  mcpUrl: ""
+
+  # user_id the curator agent operates as.
+  userId: "default"
+
 # Frontend (社内 Wiki ポータル) configuration
 frontend:
   enabled: true

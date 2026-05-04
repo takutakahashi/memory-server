@@ -90,6 +90,19 @@ spec:
                   key: AWS_SECRET_ACCESS_KEY
                   optional: true
             {{- end }}
+            {{- if and .Values.curator ((.Values.curator).mcpUrl) }}
+            - name: MEMORY_SERVER_MCP_URL
+              value: {{ .Values.curator.mcpUrl | quote }}
+            {{- end }}
+            {{- if and .Values.curator ((.Values.curator).userId) }}
+            - name: CURATOR_USER_ID
+              value: {{ .Values.curator.userId | quote }}
+            {{- end }}
+          {{- if and .Values.curator ((.Values.curator).secretName) }}
+          envFrom:
+            - secretRef:
+                name: {{ .Values.curator.secretName }}
+          {{- end }}
           resources:
             {{- toYaml .Values.resources | nindent 12 }}
       {{- with .Values.nodeSelector }}

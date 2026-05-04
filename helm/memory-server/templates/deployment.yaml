@@ -19,6 +19,7 @@ spec:
       {{- end }}
       labels:
         {{- include "memory-server.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: api
     spec:
       {{- with .Values.imagePullSecrets }}
       imagePullSecrets:

@@ -114,7 +114,7 @@ async function processBatch(entries: InboxEntry[]): Promise<string[]> {
             type: "http",
             url: MCP_URL,
             ...(Object.keys(mcpHeaders).length > 0 && {
-              requestInit: { headers: mcpHeaders },
+              headers: mcpHeaders,
             }),
           },
         },

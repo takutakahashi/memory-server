@@ -111,7 +111,7 @@ async function processBatch(entries: InboxEntry[]): Promise<string[]> {
         maxTurns: 40,
         mcpServers: {
           "memory-server": {
-            type: "sse",
+            type: "http",
             url: MCP_URL,
             ...(Object.keys(mcpHeaders).length > 0 && {
               requestInit: { headers: mcpHeaders },

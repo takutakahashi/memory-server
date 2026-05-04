@@ -72,10 +72,6 @@ spec:
             - name: ADMIN_TOKEN
               value: {{ .Values.auth.adminToken | quote }}
             {{- end }}
-            {{- if and .Values.auth ((.Values.auth).authEnabled) }}
-            - name: AUTH_ENABLED
-              value: "true"
-            {{- end }}
             {{- if or .Values.aws.accessKeyId .Values.existingSecret }}
             - name: AWS_ACCESS_KEY_ID
               valueFrom:
